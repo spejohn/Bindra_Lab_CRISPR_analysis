@@ -566,6 +566,7 @@ def validate_input_tables(
         print(error_message)
         logging.error(error_message)
         return False
+    
     if counts is not None:
         try:
             counts_df = pd.read_csv(Path(counts), sep='\t')
@@ -704,6 +705,7 @@ def assign_file_path(root:str, file_str:str, fastq_dirs: set = None):
         pass
     else:
         raise FileNotFoundError("Make sure fastq file ends in .fastq or .fq, cnttbl is tab-delimited and ends in .txt or .txv, and read count table is comma-delimited ending with .csv not .xlsx.")
+    
 @profile(stdout=False, filename = r'C:\Users\spejo\Documents\2_CRISPR_analysis_test_output\crispr_analysis_pipeline_baseline.prof')
 def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
     library = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input\FASTQ\TKOv3_guide_sequences_key.csv"
@@ -872,7 +874,7 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
 
 if __name__ == "__main__":
     # Example usage
-    input_folder = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input"
-    output_folder = r"C:\Users\spejo\Documents\2_CRISPR_analysis_test_output"
+    input_folder = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input\Read_count\Heer_Bindra"
+    output_folder = r"C:\Users\spejo\Documents\2_CRISPR_analysis_test_output\Read_count"
 
-    run_pipeline(input_folder, output_folder, overwrite=False)
+    run_pipeline(input_folder, output_folder, overwrite=True)
