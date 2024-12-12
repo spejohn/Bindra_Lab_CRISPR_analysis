@@ -54,150 +54,109 @@ def mageck_count(
 ):
     """
     Run MAGeCK count to generate read counts from FASTQ files.
-
-    Args:
-        rc_table (str): Path to sgRNA library CSV. Expected columns are [sgRNA, sequence, gene].
-        sample_sheet (pd.DataFrame): DataFrame with columns [sample, fastq1, fastq2],
-            where fastq1 and fastq2 are absolute paths to the relevant R1/R2 read files for each sample.
-        output_dir (str): Path to directory for storing output files.
-
-    Returns:
-        None
-
-    Raises:
-        ChildProcessError: If the Docker container running MAGeCK count exits with a non-zero status code.
     """
     image = "samburger/mageck"
-    volumes = [
-        # TODO: edit library volume to point towards data folder with ess_genes - should deposit sgrna library files there
-        f"{str(Path(os.getcwd()).absolute())}:/work",
-        f"{str(Path(library_file).parent.absolute())}:/library",
-        f"{str(Path(output_dir).absolute())}:/output",
-    ]
-    #TODO: make conditional statements for library names in fastq file dirs
-    #if 'tkov3' in folder_name:
+    
+    # Mount volumes directly - each represents a mapping of host_path:container_path
+    volumes = {
+        str(Path(library_file).absolute()): '/library/library.csv',  # Mount library file
+        str(Path(output_dir).absolute()): '/output'  # Mount output directory
+    }
+    
+    # Add each FASTQ file as a mounted volume
+    for _, row in sample_sheet.iterrows():
+        fastq_path = str(Path(row['fastq_path']).absolute())
+        container_path = f'/data/{Path(row["fastq_path"]).name}'
+        volumes[fastq_path] = container_path
+
+    # Build the mageck command using container paths
     count_command = [
         "mageck",
         "count",
-        "-l",
-        "/library/" + Path(library_file).name,
-        "-n",
-        Path(sample_sheet).name,
-        "--trim-5",
-        "0",
-        "--sample-label",
-        ]
-
-    # Isn't it redundant to have the sample sheet spit out as a list, convert to df, then convert back to list?
-    count_command.append(",".join(sample_sheet["sample_name"].tolist()))
-    count_command.append("--fastq")
-    count_command.append(" /work/".join(sample_sheet["fastq_path"].tolist()))
-    count_command_line = " ".join(count_command)
-    container_workdir = PurePosixPath("/output")
-    #TODO: decide where I want to copy count file to output
-    copy_command_line = (
-        f"mkdir -p {container_workdir} && cp {Path(sample_sheet).name}* {container_workdir}"
-    )
-    # Run the command in the container
-    shell_cmd = f"docker run -it"
-    for vol in volumes:
-        shell_cmd += f' -v "{vol}"'
-    shell_cmd += (
-        f' samburger/mageck "{count_command_line + " && " + copy_command_line}"'
-    )
-    print(shell_cmd)
+        "-l", "/library/library.csv",
+        "-n", "/output/count_results",
+        "--trim-5", "0",
+        "--sample-label", ",".join(sample_sheet["sample_name"]),
+        "--fastq"
+    ]
+    
+    # Add FASTQ files using their container paths
+    fastq_paths = [f'/data/{Path(path).name}' for path in sample_sheet["fastq_path"]]
+    count_command.extend(fastq_paths)
+    
+    # Convert command list to string
+    count_command_line = " ".join(map(str, count_command))
+    
+    # Run container
     container = DOCKER_CLIENT.containers.run(
-        image,
-        f'"{count_command_line + " && " + copy_command_line}"',
+        image=image,
+        command=count_command_line,
         volumes=volumes,
-        remove=False,
-        detach=True,  # Run in the background
+        remove=True,  # Automatically remove container after completion
+        detach=True,
         stdout=True,
-        stderr=True,
+        stderr=True
     )
-    # Stream the logs
-    for line in container.logs(stream=True, stdout=True, stderr=True, follow=True):
-        print(line.decode("utf-8").strip())
-    container_status = container.wait()
-    if not container_status["StatusCode"] == 0:
-        print(
-            f"Error: Container exited with status code {container_status['StatusCode']}"
-        )
-    count_df = pd.read_csv(Path(sample_sheet).glob("*.count.txt"), sep="\t+")
-    return count_df
 
-def mageck_test(
-    contrasts: str, 
-    input_file: str,
-    output_dir: str, 
-):
+    # Stream the logs
+    for line in container.logs(stream=True, follow=True):
+        print(line.decode().strip())
+        
+    # Check exit status
+    result = container.wait()
+    if result['StatusCode'] != 0:
+        raise RuntimeError(f"MAGeCK failed with exit code {result['StatusCode']}")
+
+    # Return path to count results
+    return Path(output_dir) / "count_results.count.txt"
+
+def mageck_test(contrasts: str, input_file: str, output_dir: str):
     contrasts_df = pd.read_csv(Path(contrasts), sep="\t+")
     image = "samburger/mageck"
-    volumes = [
-        f"{str(Path(os.getcwd()).absolute())}:/work",
-        f"{str(Path(input_file).absolute())}:/input",
-        f"{str(Path(output_dir).absolute())}:/output"
-    ]
+    
+    # Better volume mapping
+    volumes = {
+        str(Path(input_file).absolute()): '/input/counts.txt',
+        str(Path(output_dir).absolute()): '/output'
+    }
 
-    container_indir = PurePosixPath("/input")
-    container_outdir = PurePosixPath("/output")
-    test_command = [
-        "mageck",
-        "test",
-        "--count-table",
-        container_indir,
-        "--norm-method",
-        "median",
-        "--adjust-method",
-        "fdr",
-    ]
     for line in contrasts_df.itertuples():
-        # Make an extension of test_command for each contrast
-        # Using the treatment and control columns e.g.:
-        # -t SampleA,SampleB -c SampleD,SampleE
-        contrast_extension = f"-t {line.treatment} -c {line.control}"
-        full_command = test_command + [
-            "--output-prefix",
-            f"{line.contrast}",
-            contrast_extension,
+        test_command = [
+            "mageck", "test",
+            "--count-table", "/input/counts.txt",
+            "--norm-method", "median",
+            "--adjust-method", "fdr",
+            "--output-prefix", f"/output/{line.contrast}",
+            "-t", line.treatment,
+            "-c", line.control
         ]
-        # Add a copying of output
-        copy_command = f"&& cp {line.contrast}* {container_outdir}"
-        full_command.append(copy_command)
-        # Run the full command for the current contrast
-        shell_cmd = f"docker run -it"
-        for vol in volumes:
-            shell_cmd += f' -v "{vol}"'
-        shell_cmd += f' samburger/mageck "{" ".join(map(str, full_command))}"'
-        print(shell_cmd)
+        
+        command_str = " ".join(map(str, test_command))
+        
         container = DOCKER_CLIENT.containers.run(
-            image,
-            f'"{" ".join(map(str, full_command))}"',
+            image=image,
+            command=command_str,
             volumes=volumes,
-            remove=False,
-            detach=True,  # Run in the background
+            remove=True,
+            detach=True,
+            stdout=True,
+            stderr=True
         )
 
-        # Create new .csv for readability/downstream QA_QC from .txt output
-        output_path = Path(output_dir)
-        for txt_file in output_path.glob("*.gene_summary.txt"):
-
-            csv_file = str(txt_file).replace(".gene_summary.txt", "_gMGK")
-    
-            df = pd.read_csv(txt_file, sep="\t")
-            df.to_csv(Path(csv_file).with_suffix(".csv"), index=False)
-
-            print(f"Converted {txt_file} to {csv_file}")
-
-        # Stream the logs
+        # Stream logs and handle errors
         for line in container.logs(stream=True, follow=True):
-            print(line.decode("utf-8").strip())
-        container_status = container.wait()
-        if not container_status["StatusCode"] == 0:
-            raise ChildProcessError(
-                f"Error: Container exited with status code {container_status['StatusCode']}"
+            print(line.decode().strip())
+            
+        if container.wait()['StatusCode'] != 0:
+            raise RuntimeError("MAGeCK test failed")
+            
+        # Convert output to CSV
+        for txt_file in Path(output_dir).glob("*.gene_summary.txt"):
+            csv_file = str(txt_file).replace(".gene_summary.txt", "_gMGK")
+            pd.read_csv(txt_file, sep="\t").to_csv(
+                Path(csv_file).with_suffix(".csv"), 
+                index=False
             )
-    return
 
 
 def run_drugz(contrasts: str, 
