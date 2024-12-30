@@ -1,5 +1,5 @@
 # Build stage
-FROM python:3.10-slim-bookworm as builder
+FROM python:3.10-slim-bookworm AS builder
 
 # Install build dependencies and wget
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,9 +30,9 @@ RUN pip install --no-cache-dir \
     statsmodels
 
 # Install MAGeCK from source
-RUN wget https://sourceforge.net/projects/mageck/files/latest/download -O mageck.tar.gz && \
+RUN wget https://downloads.sourceforge.net/project/mageck/0.5/mageck-0.5.9.4.tar.gz -O mageck.tar.gz && \
     tar -xzvf mageck.tar.gz && \
-    cd mageck* && \
+    cd mageck-0.5.9.4 && \
     python setup.py install && \
     cd .. && \
     rm -rf mageck*
@@ -44,11 +44,8 @@ FROM python:3.10-slim-bookworm
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application
-COPY . /app
+# Set working directory
 WORKDIR /app
-
-RUN python setup.py install
 
 ENTRYPOINT ["/bin/bash", "-c"]
 CMD ["mageck", "--version"]
