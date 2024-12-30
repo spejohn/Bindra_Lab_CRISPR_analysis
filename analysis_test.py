@@ -582,36 +582,17 @@ def validate_input_tables(
             return False
     return True
 
-def longest_common_substring(s1:str, s2:str):
-    m, n = len(s1), len(s2)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    length = 0
-    end_pos = 0
-
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if s1[i - 1] == s2[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1] + 1
-                if dp[i][j] > length:
-                    length = dp[i][j]
-                    end_pos = i
-
-    return s1[end_pos - length:end_pos]
-
 def reverse_dir(input_dir:str, root:str, output_dir:str):
-    # Finds and removes the common substring between input_dir and root
-    # This allows us to prepend output_dir and search for files if the input and output directory structures are mirrored
+    # Use regex to find and remove the input_dir path from root
     if input_dir in root:
-        commmon_substring = longest_common_substring(input_dir, root)
-        #print(f"This is the longest common string: {commmon_substring}")
-        dir_str = root.replace(commmon_substring, "", 1)
+        dir_str = re.sub(f'^{re.escape(input_dir)}', '', root)
     else:
         print(f"Input directory string not found for {root} file.")
 
     # Combine the paths to mirror the input directory
     out_path = Path(output_dir) / Path(dir_str.lstrip('\\'))
 
-    # Create dir is doesn't exist
+    # Create dir if doesn't exist
     if not out_path.exists:
         os.makedirs(out_path, parents=True)
 
