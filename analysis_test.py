@@ -1,15 +1,11 @@
-import argparse
-from multiprocessing import Value
 import os
 import re
-import sys
 import subprocess
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Optional, Union
 import logging
 
 import docker
-from gooey import Gooey, GooeyParser
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -27,23 +23,40 @@ logging.basicConfig(filename= r'C:\Users\spejo\Documents\2_CRISPR_analysis_test_
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 def generate_sample_sheet(reads_dir):
-    # Make a mapping of dirname:fastq for each directory in the reads directory
     reads_dir = Path(reads_dir)
     samples = list()
 
-    for file in reads_dir.iterdir():
-        if file.suffix == ("_cnttbl"):
+    # Find all FASTQ files
+    fastq_files = list(reads_dir.glob("*.fastq")) + list(reads_dir.glob("*.fq"))
+    if not fastq_files:
+        raise FileNotFoundError(f"No FASTQ files found in {reads_dir}")
+
+    for file in fastq_files:
+        if "_cnttbl" in str(file).lower():
             continue
-        elif file.endswith('.fastq'):
-            samples.append(
-                [
-                    file.name,
-                    str(reads_dir / file)
-                ]
-            )
+        
+        sample_name = file.stem
+        fastq_path = str(file.absolute())
+        
+        # Verify the path contains the sample name
+        if sample_name not in fastq_path:
+            logging.error(f"Sample name {sample_name} not found in path {fastq_path}")
+            raise ValueError(f"Sample name mismatch: {sample_name} vs {fastq_path}")
+        
+        samples.append([sample_name, fastq_path])
+
+    logging.info(f"Found {len(samples)} FASTQ files in {reads_dir}")
+    for sample in samples:
+        logging.debug(f"Sample: {sample[0]} -> {sample[1]}")
 
     sample_sheet = pd.DataFrame(samples, columns=["sample_name", "fastq_path"])
     sample_sheet = sample_sheet.sort_values("sample_name").reset_index(drop=True)
+    
+    # Verify no duplicate sample names
+    if sample_sheet['sample_name'].duplicated().any():
+        dupes = sample_sheet[sample_sheet['sample_name'].duplicated()]['sample_name'].unique()
+        raise ValueError(f"Duplicate sample names found: {dupes}")
+    
     return sample_sheet
 
 
@@ -57,17 +70,31 @@ def mageck_count(
     """
     image = "samburger/mageck"
     
-    # Mount volumes directly - each represents a mapping of host_path:container_path
+    # Verify all FASTQ files exist before starting
+    missing_files = []
+    for _, row in sample_sheet.iterrows():
+        if not Path(row['fastq_path']).exists():
+            missing_files.append(row['fastq_path'])
+    if missing_files:
+        raise FileNotFoundError(f"FASTQ files not found: {', '.join(missing_files)}")
+
+    # Create output directory if it doesn't exist
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Mount volumes - mount the FASTQ directory instead of individual files
+    fastq_dir = str(Path(os.path.dirname(sample_sheet['fastq_path'].iloc[0])).absolute())
     volumes = {
         str(Path(library_file).absolute()): '/library/library.csv',  # Mount library file
-        str(Path(output_dir).absolute()): '/output'  # Mount output directory
+        str(Path(output_dir).absolute()): '/output',  # Mount output directory
+        fastq_dir: '/data'  # Mount FASTQ directory
     }
     
-    # Add each FASTQ file as a mounted volume
+    # Create container paths using relative paths
+    fastq_container_paths = []
     for _, row in sample_sheet.iterrows():
-        fastq_path = str(Path(row['fastq_path']).absolute())
-        container_path = f'/data/{Path(row["fastq_path"]).name}'
-        volumes[fastq_path] = container_path
+        fastq_filename = Path(row['fastq_path']).name
+        container_path = f'/data/{fastq_filename}'
+        fastq_container_paths.append(container_path)
 
     # Build the mageck command using container paths
     count_command = [
@@ -77,38 +104,46 @@ def mageck_count(
         "-n", "/output/count_results",
         "--trim-5", "0",
         "--sample-label", ",".join(sample_sheet["sample_name"]),
-        "--fastq"
-    ]
-    
-    # Add FASTQ files using their container paths
-    fastq_paths = [f'/data/{Path(path).name}' for path in sample_sheet["fastq_path"]]
-    count_command.extend(fastq_paths)
+        "--fastq",
+    ] + fastq_container_paths  # Add all FASTQ paths at once
     
     # Convert command list to string
     count_command_line = " ".join(map(str, count_command))
     
-    # Run container
-    container = DOCKER_CLIENT.containers.run(
-        image=image,
-        command=count_command_line,
-        volumes=volumes,
-        remove=True,  # Automatically remove container after completion
-        detach=True,
-        stdout=True,
-        stderr=True
-    )
+    logging.info(f"Running MAGeCK command: {count_command_line}")
+    logging.info(f"Mounted volumes: {volumes}")
+    
+    try:
+        # Run container
+        container = DOCKER_CLIENT.containers.run(
+            image=image,
+            command=count_command_line,
+            volumes=volumes,
+            remove=True,
+            detach=True,
+            stdout=True,
+            stderr=True
+        )
 
-    # Stream the logs
-    for line in container.logs(stream=True, follow=True):
-        print(line.decode().strip())
-        
-    # Check exit status
-    result = container.wait()
-    if result['StatusCode'] != 0:
-        raise RuntimeError(f"MAGeCK failed with exit code {result['StatusCode']}")
+        # Stream the logs
+        for line in container.logs(stream=True, follow=True):
+            print(line.decode().strip())
+            
+        # Check exit status
+        result = container.wait()
+        if result['StatusCode'] != 0:
+            raise RuntimeError(f"MAGeCK failed with exit code {result['StatusCode']}")
+
+    except Exception as e:
+        logging.error(f"Error running MAGeCK: {str(e)}")
+        raise
 
     # Return path to count results
-    return Path(output_dir) / "count_results.count.txt"
+    output_file = Path(output_dir) / "count_results.count.txt"
+    if not output_file.exists():
+        raise FileNotFoundError(f"Expected output file not found: {output_file}")
+        
+    return output_file
 
 def mageck_test(contrasts: str, input_file: str, output_dir: str):
     contrasts_df = pd.read_csv(Path(contrasts), sep="\t+")
@@ -669,171 +704,113 @@ def assign_file_path(root:str, file_str:str, fastq_dirs: set = None):
 def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
     library = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input\FASTQ\TKOv3_guide_sequences_key.csv"
     
-    # Load essential gene lists
-    # TODO: make these configurable rather than hard-coded
-    '''depmap_genes = pd.read_csv(Path("data") / "DepMap 22Q4 Common Essentials.csv")
-    depmap_genes.columns = ["gene"]
-    depmap_genes["gene"] = depmap_genes["gene"].apply(lambda x: x.split(" ")[0])
-    depmap_genes = list(depmap_genes["gene"].unique())
-    cellecta_ess = pd.read_csv(Path("data") / "cellecta_essential_genes.csv")
-    cellecta_ess = list(cellecta_ess["gene"].unique())
-    cellecta_noness = pd.read_csv(Path("data") / "cellecta_nonessential_genes.csv")
-    cellecta_noness = list(cellecta_noness["gene"].unique())
-    ess_genes = {
-        "depmap": depmap_genes,
-        "cellecta": cellecta_ess,
-    }
-    noness_genes = {"cellecta": cellecta_noness}'''
-
-    rc_paths_list = {'count_file_path': [], 
-                     'cnttbl_path': [],
-                     'rc_out_dir': []}
+    # Initialize DataFrames with columns
+    rc_paths_df = pd.DataFrame(columns=['count_file_path', 'cnttbl_path', 'rc_out_dir'])
+    fastq_paths_df = pd.DataFrame(columns=['fastq_dir_path', 'cnttbl_path', 'fastq_out_dir'])
     
-    fastq_paths_list = {'fastq_dir_path': [],
-                        'cnttbl_path': [],
-                        'fastq_out_dir': []}
-    
-    rc_outpath_list = []
-    fastq_outpath_list = []
     # Create list of screens that have already been analyzed
     analyzed_screen_list = check_existing_files(input_dir, output_dir)
     
-    # Recursively walk through input directory - should have FASTQ and Read_count subdirectories
+    # Track directories we've processed to avoid duplicates
+    processed_dirs = set()
+    
     for root, dirs, files in os.walk(input_dir):
-        dir_df = pd.DataFrame(os.walk(input_dir))
-        dir_df.to_csv(Path(output_dir) / Path("dir_df_test.csv"))
-
-        # Skip directories for screens that have already been analyzed
+        # Skip already analyzed directories unless overwrite=True
         if root in analyzed_screen_list and not overwrite:
-            print(f"{root} already analyzed, residing in {output_dir}")
+            logging.info(f"{root} already analyzed, residing in {output_dir}")
             continue
-        # Check if dirs is empty. Dirs is empty at the bottom of a directory tree. This should put you in place to find files.
-        elif dirs:
+        
+        # Skip if no files in directory
+        if not files:
             continue
-        elif "read_count" in root.lower():
-            # Check for cnttbl and read count table in directory. If both aren't present, it will ruin our paths df later.
+            
+        if "read_count" in root.lower():
+            # Process read count directory
             if any('_cnttbl' in f.lower() for f in files) and any('_rc' in f.lower() and '.csv' in f.lower() for f in files):
+                rc_files = []
+                cnttbl = None
+                rc_outpath = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
+                
                 for file in files:
-                    rc_paths_df = None
-
-                    # Define output path to mirror the input directory by removing input dir from root then prepending output dir to root, create dir if doesn't exist
-                    rc_outpath = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
-
-                    # Check if test output files exist
-                    rc_output_files_exist = any(list(rc_outpath.glob(pattern)) for pattern in ["*gene_summary.txt", "*DZ_output.tsv"])
-
-                    # TODO: rc_output_files_exist always seems to evalate to true even when suffixes aren't in file name
-                    # Does this matter? analyzed_screen_list should eliminate the pre-analyzed files AND this overwrite is redundant then
-                    
-                    if rc_output_files_exist and not overwrite:
-                        print(f"Output files for {file} already exist, run with --overwrite to overwrite.")
-                        continue
-
-                    else:
-                        rc_outpath_str = str(rc_outpath)
-                        if rc_outpath_str not in rc_outpath_list:
-                            rc_outpath_list.append(rc_outpath_str)
-                        
-                        # If files don't exist and/or overwrite=True, create path list for paired files to analyze
-                        result = assign_file_path(root=root, file_str=file)
-                        if result is not None:
-                            key, value = result
-                            new_rows = {key: [value]}
-                            rc_paths_list[key].extend(new_rows[key])
-                            
-                        else:
-                            pass
-            else:
-                continue
+                    if '_cnttbl' in file.lower():
+                        cnttbl = str(Path(root) / file)
+                    elif '_rc' in file.lower() and '.csv' in file.lower():
+                        rc_files.append(str(Path(root) / file))
+                
+                if cnttbl and rc_files:
+                    for rc_file in rc_files:
+                        rc_paths_df.loc[len(rc_paths_df)] = {
+                            'count_file_path': rc_file,
+                            'cnttbl_path': cnttbl,
+                            'rc_out_dir': str(rc_outpath)
+                        }
+                    logging.info(f"Added read count files from {root} for analysis")
                     
         elif "fastq" in root.lower():
-            # Check for cnttbl and fastq files in directory. If both aren't present, it will ruin our paths df later.
-            if any('_cnttbl' in f.lower() for f in files) and any('.fq' in f.lower() or '.fastq' in f.lower() for f in files):      
+            # Process FASTQ directory
+            if root not in processed_dirs and any('_cnttbl' in f.lower() for f in files) and any(f.lower().endswith(('.fq', '.fastq')) for f in files):
+                cnttbl = None
+                fastq_outpath = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
+                
+                # Find control table
                 for file in files:
-                    fastq_paths_df = None
+                    if '_cnttbl' in file.lower():
+                        cnttbl = str(Path(root) / file)
+                        break
+                
+                if cnttbl:
+                    fastq_paths_df.loc[len(fastq_paths_df)] = {
+                        'fastq_dir_path': root,
+                        'cnttbl_path': cnttbl,
+                        'fastq_out_dir': str(fastq_outpath)
+                    }
+                    processed_dirs.add(root)
+                    logging.info(f"Added FASTQ directory {root} for analysis with {len([f for f in files if f.lower().endswith(('.fq', '.fastq'))])} FASTQ files")
 
-                    # Define output path to mirror the input directory by removing input dir from root then prepending output dir to root, create dir if doesn't exist
-                    fastq_outpath = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
-
-                    # Check if test output files exist and return
-                    fastq_output_files_exist = any(list(fastq_outpath.glob(pattern)) for pattern in ["*gene_summary.txt", "*DZ_output.tsv"])
-                    
-                    # TODO: fastq_output_files_exist always seems to evalate to true even when suffixes aren't in file name
-                    # Does this matter? analyzed_screen_list should eliminate the pre-analyzed files AND this overwrite is redundant then
-                    if fastq_output_files_exist and not overwrite:
-                        print(f"Output files for {file} already exist, run with --overwrite to overwrite.")
-                        continue
-                    else:
-                        fastq_outpath_str = str(fastq_outpath)
-                        if fastq_outpath_str not in fastq_outpath_list:
-                            fastq_outpath_list.append(fastq_outpath_str)
-                            
-                        # If files don't exist and/or overwrite=True, create path list for paired files to analyze
-                        result = assign_file_path(root=root, file_str=file)
-                        if result is not None:
-                            key, value = result
-                            new_rows = {key: [value]}
-                            fastq_paths_list[key].extend(new_rows[key])
-                            
-                        else:
-                            pass
-        
-        else:
-            raise IsADirectoryError("Confirm Read_count or FASTQ are names of subdirectories within input directory.")
-        
-    rc_paths_list["rc_out_dir"] = rc_outpath_list
-    fastq_paths_list["fastq_out_dir"] = fastq_outpath_list
-
-    if not rc_paths_list:
-        raise ValueError("Read count path list empty.")
-    else:
-        rc_paths_df = pd.DataFrame.from_dict(rc_paths_list)
-
-        # Validate and analyze read count data
-        for row in rc_paths_df.itertuples():
-            
+    # Process read count files
+    if not rc_paths_df.empty:
+        for _, row in rc_paths_df.iterrows():
             if not validate_input_tables(contrasts=row.cnttbl_path, counts=row.count_file_path):
-                print(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
+                logging.warning(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
                 continue
 
             mageck_test(input_file=row.count_file_path, 
-                    contrasts=row.cnttbl_path, 
-                    output_dir=row.rc_out_dir)
-            # plot_QA(args.title, ess_genes, noness_genes)
+                       contrasts=row.cnttbl_path, 
+                       output_dir=row.rc_out_dir)
             run_drugz(input_file=row.count_file_path, 
-                  contrasts=row.cnttbl_path, 
-                  output_dir=row.rc_out_dir)
-            #plot_hits_drugz(title, cnttbl_rc, output_dir)
-            print(f"Finished analysis on files in {root}")
+                     contrasts=row.cnttbl_path, 
+                     output_dir=row.rc_out_dir)
+            logging.info(f"Finished analysis on read count files in {root}")
 
-    if not fastq_paths_list:
-        raise ValueError("Fastq files directory list empty.")
-    else:
-        fastq_paths_df = pd.DataFrame.from_dict(fastq_paths_list)
-
-        # Create count table from fastq, validate, analyze
-        for row in fastq_paths_df.itertuples():
+    # Process FASTQ files
+    if not fastq_paths_df.empty:
+        for _, row in fastq_paths_df.iterrows():
             sample_sheet = generate_sample_sheet(row.fastq_dir_path)
+            logging.info(f"Generated sample sheet for {row.fastq_dir_path} with {len(sample_sheet)} samples")
 
             if not validate_input_tables(contrasts=row.cnttbl_path, sample_sheet=sample_sheet):
-                print(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
+                logging.warning(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
                 continue
 
-            count_df = mageck_count(sample_sheet=sample_sheet, library_file=library, output_dir=row.fastq_dir_path)
+            count_df = mageck_count(sample_sheet=sample_sheet, 
+                                  library_file=library, 
+                                  output_dir=row.fastq_out_dir)
             mageck_test(input_file=count_df, 
-                        contrasts=row.cnttbl_path, 
-                        output_dir=row.fastq_out_dir)
+                       contrasts=row.cnttbl_path, 
+                       output_dir=row.fastq_out_dir)
             run_drugz(input_file=count_df, 
-                        contrasts=row.cnttbl_path, 
-                        output_dir=row.fastq_out_dir)
-            print(f"Finished analysis on files in {root}")
-        
+                     contrasts=row.cnttbl_path, 
+                     output_dir=row.fastq_out_dir)
+            logging.info(f"Finished analysis on FASTQ files in {root}")
+
+    logging.info("Pipeline execution completed")
+
 
 # TODO: could change mageck_count() and mageck_test() so count table output is easier to find/read
 
 if __name__ == "__main__":
     # Example usage
-    input_folder = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input\Read_count\Heer_Bindra"
-    output_folder = r"C:\Users\spejo\Documents\2_CRISPR_analysis_test_output\Read_count"
+    input_folder = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input"
+    output_folder = r"C:\Users\spejo\Documents\2_CRISPR_analysis_test_output"
 
     run_pipeline(input_folder, output_folder, overwrite=True)
