@@ -56,15 +56,8 @@ def generate_sample_sheet(fastq_dir: str) -> pd.DataFrame:
     return sample_sheet
 
 
-def mageck_count(
-    sample_sheet: pd.DataFrame,
-    library_file: str,
-    output_dir: str,
-    contrasts_file: str,
-):
-    """
-    Run MAGeCK count to generate read counts from FASTQ files.
-    """
+def mageck_count(sample_sheet: pd.DataFrame, library_file: str, output_dir: str):
+    """Run MAGeCK count to generate read counts from FASTQ files."""
     image = "samburger/mageck"
     
     # Convert all paths to absolute Path objects
@@ -76,55 +69,60 @@ def mageck_count(
     fastq_dir = Path(os.path.dirname(sample_sheet['fastq_path'].iloc[0]))
     experiment_name = fastq_dir.name
     
-    # Prepare container paths and volumes
-    fastq_container_paths = []
+    # Initialize volumes dictionary with just library and output paths
     volumes = {
-        str(library_path.parent): {'bind': '/library', 'mode': 'ro'},
-        str(output_path): {'bind': '/output', 'mode': 'rw'}
+        str(Path(library_file).parent): {'bind': '/library', 'mode': 'ro'},
+        str(output_path): {'bind': '/output', 'mode': 'rw'},
     }
     
-    # Add FASTQ files to volumes with unique container paths
-    for idx, row in sample_sheet.iterrows():
-        fastq_path = Path(row['fastq_path'])
-        container_path = f'/fastq/file_{idx}/{fastq_path.name}'
-        volumes[str(fastq_path.parent)] = {'bind': f'/fastq/file_{idx}', 'mode': 'ro'}
-        fastq_container_paths.extend(['--fastq', container_path])
-    
-    logging.info("Volume mappings:")
-    for host_path, container_info in volumes.items():
-        logging.info(f"  {host_path} -> {container_info['bind']} ({container_info['mode']})")
+    # Add each unique FASTQ directory to volumes
+    unique_fastq_dirs = {str(Path(path).parent) for path in sample_sheet['fastq_path']}
+    for idx, fastq_dir in enumerate(unique_fastq_dirs):
+        volumes[fastq_dir] = {'bind': f'/fastq/dir_{idx}', 'mode': 'ro'}
     
     try:
         # Build mageck count command
         count_command = [
             "mageck",
             "count",
-            "-l", "/library/library.csv",
-            "-n", f"/output/{experiment_name}_RC",  # Use experiment name in output
+            "-l", f"/library/{Path(library_file).name}",
+            "-n", f"/output/{experiment_name}_RC",
             "--trim-5", "0",
-            "--sample-label", ",".join(sample_sheet["sample_name"]),
-        ] + fastq_container_paths
+            "--sample-label", ",".join(sample_sheet["sample_name"])
+        ]
+
+        # Build list of FASTQ paths in container
+        fastq_paths = []
+        for idx, row in sample_sheet.iterrows():
+            fastq_dir_idx = list(unique_fastq_dirs).index(str(Path(row['fastq_path']).parent))
+            container_path = f'/fastq/dir_{fastq_dir_idx}/{Path(row["fastq_path"]).name}'
+            fastq_paths.append(container_path)
         
+        # Add --fastq flag and all FASTQ files
+        count_command.extend(["--fastq"] + fastq_paths)
+
         command_str = " ".join(map(str, count_command))
         logging.info(f"Running MAGeCK count command: {command_str}")
+        logging.info(f"Volume mappings:")
+        for host_path, container_info in volumes.items():
+            logging.info(f"  {host_path} -> {container_info['bind']} ({container_info['mode']})")
         
         # Run container with explicit working directory
         container = DOCKER_CLIENT.containers.run(
             image,
-            f'bash -c "cd /output && {command_str}"',  # Ensure we're in output directory
+            f'"{command_str}"',
             volumes=volumes,
             remove=True,
             detach=True,
             stdout=True,
-            stderr=True,
-            working_dir='/output'  # Set working directory explicitly
+            stderr=True
         )
         
         # Stream logs
         for line in container.logs(stream=True, follow=True):
             log_text = line.decode().strip()
-            print(log_text)
-            logging.info(log_text)
+            print(log_text)  # Print to console for immediate feedback
+            logging.info(f"Container output: {log_text}")
         
         # Check container exit status
         result = container.wait()
@@ -138,7 +136,7 @@ def mageck_count(
         logging.info(f"Output directory contents: {list(output_path.glob('*'))}")
         
         # Verify output files exist and have content
-        count_file = output_path / f"{experiment_name}.count.txt"
+        count_file = output_path / f"{experiment_name}_RC.count.txt"
         if not count_file.exists():
             raise FileNotFoundError(f"Expected count file not found: {count_file}")
         
@@ -176,7 +174,6 @@ def mageck_count(
         logging.error(f"Command: {command_str}")
         logging.error(f"Volumes: {volumes}")
         logging.error(f"Sample sheet contents:\n{sample_sheet.to_string()}")
-        logging.error(f"FASTQ files:\n{fastq_container_paths}")
         raise
 
 
@@ -1002,7 +999,6 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
                 sample_sheet=sample_sheet, 
                 library_file=library,
                 output_dir=row.fastq_out_dir,
-                contrasts_file=row.cnttbl_path
             )
             logging.info(f"Count results written to: {count_file}")
             
