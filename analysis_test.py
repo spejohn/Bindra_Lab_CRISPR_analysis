@@ -25,44 +25,33 @@ log_file = rf'C:\Users\spejo\Documents\2_CRISPR_analysis_test_output\validation_
 
 logging.basicConfig(
     filename=log_file, 
-    level=logging.ERROR,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-def generate_sample_sheet(reads_dir):
-    reads_dir = Path(reads_dir)
-    samples = list()
-
-    # Find all FASTQ files
-    fastq_files = list(reads_dir.glob("*.fastq")) + list(reads_dir.glob("*.fq"))
-    if not fastq_files:
-        raise FileNotFoundError(f"No FASTQ files found in {reads_dir}")
-
-    for file in fastq_files:
-        if "_cnttbl" in str(file).lower():
-            continue
-        
-        sample_name = file.stem
-        fastq_path = str(file.absolute())
-        
-        # Verify the path contains the sample name
-        if sample_name not in fastq_path:
-            logging.error(f"Sample name {sample_name} not found in path {fastq_path}")
-            raise ValueError(f"Sample name mismatch: {sample_name} vs {fastq_path}")
-        
-        samples.append([sample_name, fastq_path])
-
-    logging.info(f"Found {len(samples)} FASTQ files in {reads_dir}")
-    for sample in samples:
-        logging.debug(f"Sample: {sample[0]} -> {sample[1]}")
-
-    sample_sheet = pd.DataFrame(samples, columns=["sample_name", "fastq_path"])
-    sample_sheet = sample_sheet.sort_values("sample_name").reset_index(drop=True)
+def generate_sample_sheet(fastq_dir: str) -> pd.DataFrame:
+    """
+    Generate a sample sheet DataFrame from FASTQ files in a directory.
+    """
+    fastq_files = []
+    fastq_dir_path = Path(fastq_dir)
     
-    # Verify no duplicate sample names
-    if sample_sheet['sample_name'].duplicated().any():
-        dupes = sample_sheet[sample_sheet['sample_name'].duplicated()]['sample_name'].unique()
-        raise ValueError(f"Duplicate sample names found: {dupes}")
+    # Find all FASTQ files recursively
+    for file in fastq_dir_path.rglob('*'):
+        if file.suffix.lower() in ['.fastq', '.fq']:
+            fastq_files.append(file)
+    
+    if not fastq_files:
+        raise FileNotFoundError(f"No FASTQ files found in {fastq_dir}")
+    
+    # Create sample sheet with absolute paths
+    sample_sheet = pd.DataFrame({
+        'sample_name': [f.stem for f in fastq_files],
+        'fastq_path': [str(f.absolute()) for f in fastq_files]
+    })
+    
+    logging.info(f"Found {len(sample_sheet)} FASTQ files in {fastq_dir}")
+    logging.debug(f"Sample sheet contents:\n{sample_sheet.to_string()}")
     
     return sample_sheet
 
@@ -71,235 +60,360 @@ def mageck_count(
     sample_sheet: pd.DataFrame,
     library_file: str,
     output_dir: str,
+    contrasts_file: str,
 ):
     """
     Run MAGeCK count to generate read counts from FASTQ files.
     """
     image = "samburger/mageck"
     
-    # Verify all FASTQ files exist before starting
-    missing_files = []
-    for _, row in sample_sheet.iterrows():
-        if not Path(row['fastq_path']).exists():
-            missing_files.append(row['fastq_path'])
-    if missing_files:
-        raise FileNotFoundError(f"FASTQ files not found: {', '.join(missing_files)}")
-
-    # Create output directory if it doesn't exist
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    # Convert all paths to absolute Path objects
+    library_path = Path(library_file).absolute()
+    output_path = Path(output_dir).absolute()
+    output_path.mkdir(parents=True, exist_ok=True)
     
-    # Mount volumes - mount the FASTQ directory instead of individual files
-    fastq_dir = str(Path(os.path.dirname(sample_sheet['fastq_path'].iloc[0])).absolute())
+    # Get experiment name from FASTQ directory
+    fastq_dir = Path(os.path.dirname(sample_sheet['fastq_path'].iloc[0]))
+    experiment_name = fastq_dir.name
+    
+    # Prepare container paths and volumes
+    fastq_container_paths = []
     volumes = {
-        str(Path(library_file).absolute()): {'bind': '/library/library.csv', 'mode': 'ro'},
-        str(Path(output_dir).absolute()): {'bind': '/output', 'mode': 'rw'},
-        fastq_dir: {'bind': '/data', 'mode': 'ro'}
+        str(library_path.parent): {'bind': '/library', 'mode': 'ro'},
+        str(output_path): {'bind': '/output', 'mode': 'rw'}
     }
     
-    # Create container paths using relative paths
-    fastq_container_paths = []
-    for _, row in sample_sheet.iterrows():
-        fastq_filename = Path(row['fastq_path']).name
-        container_path = f'/data/{fastq_filename}'
-        fastq_container_paths.append(container_path)
-        logging.info(f"Mapping {row['fastq_path']} to {container_path}")
-
-    # Build the mageck command using container paths
-    count_command = [
-        "mageck",
-        "count",
-        "-l", "/library/library.csv",
-        "-n", "/output/count_results",
-        "--trim-5", "0",
-        "--sample-label", ",".join(sample_sheet["sample_name"]),
-        "--fastq",
-    ] + fastq_container_paths
+    # Add FASTQ files to volumes with unique container paths
+    for idx, row in sample_sheet.iterrows():
+        fastq_path = Path(row['fastq_path'])
+        container_path = f'/fastq/file_{idx}/{fastq_path.name}'
+        volumes[str(fastq_path.parent)] = {'bind': f'/fastq/file_{idx}', 'mode': 'ro'}
+        fastq_container_paths.extend(['--fastq', container_path])
     
-    count_command_line = " ".join(map(str, count_command))
-    
-    logging.info(f"Running MAGeCK command: {count_command_line}")
-    logging.info(f"Mounted volumes: {volumes}")
+    logging.info("Volume mappings:")
+    for host_path, container_info in volumes.items():
+        logging.info(f"  {host_path} -> {container_info['bind']} ({container_info['mode']})")
     
     try:
-        # Run container
+        # Build mageck count command
+        count_command = [
+            "mageck",
+            "count",
+            "-l", "/library/library.csv",
+            "-n", f"/output/{experiment_name}_RC",  # Use experiment name in output
+            "--trim-5", "0",
+            "--sample-label", ",".join(sample_sheet["sample_name"]),
+        ] + fastq_container_paths
+        
+        command_str = " ".join(map(str, count_command))
+        logging.info(f"Running MAGeCK count command: {command_str}")
+        
+        # Run container with explicit working directory
         container = DOCKER_CLIENT.containers.run(
-            image=image,
-            command=count_command_line,
+            image,
+            f'bash -c "cd /output && {command_str}"',  # Ensure we're in output directory
             volumes=volumes,
             remove=True,
             detach=True,
             stdout=True,
-            stderr=True
+            stderr=True,
+            working_dir='/output'  # Set working directory explicitly
         )
-
-        # Stream the logs
+        
+        # Stream logs
         for line in container.logs(stream=True, follow=True):
-            log_line = line.decode().strip()
-            print(log_line)
-            logging.info(log_line)
-            
-        # Check exit status
+            log_text = line.decode().strip()
+            print(log_text)
+            logging.info(log_text)
+        
+        # Check container exit status
         result = container.wait()
         if result['StatusCode'] != 0:
-            raise RuntimeError(f"MAGeCK failed with exit code {result['StatusCode']}")
-
-        # Verify output file exists
-        output_file = Path(output_dir) / "count_results.count.txt"
-        if not output_file.exists():
-            logging.error(f"Output directory contents: {list(Path(output_dir).glob('*'))}")
-            raise FileNotFoundError(f"Expected output file not found: {output_file}")
+            error_msg = f"Container exit code: {result['StatusCode']}\n"
+            error_msg += f"Error message: {result.get('Error', 'No error message available')}"
+            logging.error(error_msg)
+            raise RuntimeError(f"MAGeCK count failed: {error_msg}")
         
-        return output_file
+        # List output directory contents for debugging
+        logging.info(f"Output directory contents: {list(output_path.glob('*'))}")
+        
+        # Verify output files exist and have content
+        count_file = output_path / f"{experiment_name}.count.txt"
+        if not count_file.exists():
+            raise FileNotFoundError(f"Expected count file not found: {count_file}")
+        
+        # Read and verify count table
+        try:
+            count_data = pd.read_csv(count_file, sep='\t')
+            if count_data.empty:
+                raise ValueError(f"Count table is empty: {count_file}")
+            logging.info(f"Count table has {len(count_data)} rows and {len(count_data.columns)} columns")
+        except Exception as e:
+            logging.error(f"Error reading count table: {str(e)}")
+            raise
+        
+        # Create CSV version with absolute path
+        new_output_file = output_path / f"{experiment_name}_RC.csv"
+        count_data.to_csv(new_output_file, index=False)
+        logging.info(f"Generated CSV count table: {new_output_file}")
+        
+        # Add this after running the container:
+        container_logs = container.logs().decode()
+        if "error" in container_logs.lower() or "exception" in container_logs.lower():
+            logging.error(f"Container logs indicate error:\n{container_logs}")
+        
+        # Check container filesystem
+        try:
+            output_ls = container.exec_run("ls -la /output").output.decode()
+            logging.info(f"Container output directory contents:\n{output_ls}")
+        except Exception as e:
+            logging.error(f"Could not check container filesystem: {str(e)}")
+        
+        return str(new_output_file)
 
     except Exception as e:
         logging.error(f"Error running MAGeCK count: {str(e)}")
-        logging.error(f"Command: {count_command_line}")
+        logging.error(f"Command: {command_str}")
         logging.error(f"Volumes: {volumes}")
+        logging.error(f"Sample sheet contents:\n{sample_sheet.to_string()}")
+        logging.error(f"FASTQ files:\n{fastq_container_paths}")
         raise
 
+
 def mageck_test(contrasts: str, input_file: str, output_dir: str):
+    """
+    Run MAGeCK test analysis.
+    Returns a list of output file paths.
+    """
     image = "samburger/mageck"
+    output_files = []
     
-    # Convert all paths to absolute Path objects
+    # Convert paths to absolute Path objects
     input_path = Path(input_file).absolute()
     output_path = Path(output_dir).absolute()
-    
-    # Create output directory if it doesn't exist
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Copy input file to output directory with a known name
-    counts_file = output_path / "counts.txt"
-    logging.info(f"Copying {input_path} to {counts_file}")
-    pd.read_csv(input_path).to_csv(counts_file, sep='\t', index=False)
-    
-    # Mount volumes with explicit Windows path conversion
+    # Match the working volume format exactly
     volumes = [
-        f"{str(Path.cwd().absolute())}:/work",
-        f"{str(output_path)}:/output"
+        f"{str(Path(os.getcwd()).absolute())}:/work:rw",
+        f"{str(output_path)}:/output:rw"
     ]
     
-    logging.info(f"Mounted volumes: {volumes}")
+    logging.info(f"Input file: {input_path}")
+    logging.info(f"Output directory: {output_path}")
+    logging.info(f"Volume mappings: {volumes}")
     
-    # Use container paths for commands
-    test_command = [
-        "mageck",
-        "test",
-        "--count-table",
-        "/output/counts.txt",  # Use container path
-        "--norm-method",
-        "median",
-        "--adjust-method",
-        "fdr",
-    ]
-
+    # Read contrasts file
     contrasts_df = pd.read_csv(Path(contrasts), sep='\t')
+    
+    # Process each contrast
     for line in contrasts_df.itertuples():
-        # Build command list using container paths
-        full_command = test_command + [
-            "--output-prefix",
-            line.contrast,
-            "-t", line.treatment,
-            "-c", line.control
-        ]
-        
-        # Format Docker run command - IMPORTANT: Note the extra quotes around the MAGeCK command
-        shell_cmd = f"docker run -it"
-        for vol in volumes:
-            shell_cmd += f' -v "{vol}"'
-        shell_cmd += f' {image} "{" ".join(map(str, full_command))}"'
-        
-        logging.info(f"Running command: {shell_cmd}")
-        
         try:
-            # IMPORTANT: Pass the quoted command to Docker
+            # Handle input file based on extension
+            if input_path.suffix.lower() == '.csv':
+                tsv_name = f"{input_path.stem.replace('_RC', '')}.counts.txt"
+                host_tsv = output_path / tsv_name
+                count_data = pd.read_csv(input_path)
+                count_data.to_csv(host_tsv, sep='\t', index=False)
+                logging.info(f"Converted {input_path} to tab-separated format: {host_tsv}")
+                container_input = f"/output/{tsv_name}"
+            else:
+                container_input = f"/work/{input_path.name}"
+            
+            # Build command
+            test_command = [
+                "mageck",
+                "test",
+                "--count-table",
+                container_input,
+                "--norm-method",
+                "median",
+                "--adjust-method",
+                "fdr",
+                "--output-prefix",
+                f"/output/{line.contrast}",
+                "--keep-tmp",
+                "-t", line.treatment,
+                "-c", line.control
+            ]
+            
+            command_str = " ".join(map(str, test_command))
+            logging.info(f"Running MAGeCK command for contrast {line.contrast}:")
+            logging.info(f"Command: {command_str}")
+            
+            # Match the working container run format exactly
+            shell_cmd = f"docker run -it"
+            for vol in volumes:
+                shell_cmd += f' -v "{vol}"'
+            shell_cmd += f' samburger/mageck "{command_str}"'
+            logging.info(f"Shell command: {shell_cmd}")
+            
             container = DOCKER_CLIENT.containers.run(
                 image,
-                f'"{" ".join(map(str, full_command))}"',  # Quote the entire command
+                f'"{command_str}"',  # Match the working format with quotes
                 volumes=volumes,
                 remove=False,
                 detach=True
             )
 
             # Stream logs
-            for line in container.logs(stream=True, follow=True):
-                log_line = line.decode().strip()
-                print(log_line)
-                logging.info(log_line)
-                
-            container_status = container.wait()
-            if not container_status["StatusCode"] == 0:
-                raise ChildProcessError(
-                    f"Error: Container exited with status code {container_status['StatusCode']}"
-                )
-                
-        except Exception as e:
-            logging.error(f"Error running MAGeCK test: {str(e)}")
-            logging.error(f"Command: {shell_cmd}")
-            logging.error(f"Volumes: {volumes}")
-            logging.error(f"Working directory: {os.getcwd()}")
-            raise
+            for log_line in container.logs(stream=True, follow=True):
+                log_text = log_line.decode().strip()
+                print(log_text)
+                logging.info(f"Container output: {log_text}")
             
-        # Convert output to CSV
-        for txt_file in Path(output_dir).glob("*.gene_summary.txt"):
-            csv_file = str(txt_file).replace(".gene_summary.txt", "_gMGK")
-            pd.read_csv(txt_file, sep="\t").to_csv(
-                Path(csv_file).with_suffix(".csv"), 
-                index=False
-            )
+            result = container.wait()
+            if result['StatusCode'] != 0:
+                raise RuntimeError(f"MAGeCK test failed with status code {result['StatusCode']}")
+                
+            # Verify output files exist
+            expected_files = [
+                output_path / f"{line.contrast}.gene_summary.txt",
+                output_path / f"{line.contrast}.sgrna_summary.txt"
+            ]
+            
+            for file in expected_files:
+                logging.info(f"Checking for output file: {file}")
+                if not file.exists():
+                    logging.error(f"File not found: {file}")
+                    logging.error(f"Directory contents: {list(output_path.glob('*'))}")
+                    raise FileNotFoundError(f"Expected output file not found: {file}")
+                
+                # Verify file has content
+                try:
+                    df = pd.read_csv(file, sep='\t')
+                    if df.empty:
+                        raise ValueError(f"Output file is empty: {file}")
+                    logging.info(f"Generated {file.name} with {len(df)} rows")
+                    output_files.append(str(file))
+                except Exception as e:
+                    logging.error(f"Error reading output file {file}: {str(e)}")
+                    raise
+            
+            # Convert gene summary to CSV
+            gene_summary = expected_files[0]
+            csv_file = output_path / f"{line.contrast}_gMGK.csv"
+            pd.read_csv(gene_summary, sep="\t").to_csv(csv_file, index=False)
+            output_files.append(str(csv_file))
+            logging.info(f"Generated CSV output: {csv_file}")
+            
+        except Exception as e:
+            logging.error(f"Error running MAGeCK test for contrast {line.contrast}")
+            logging.error(f"Command: {command_str}")
+            logging.error(f"Volumes: {volumes}")
+            logging.error(f"Input file: {input_file}")
+            logging.error(f"Error: {str(e)}")
+            raise
+                
+    return output_files
+
 
 def run_drugz(contrasts: str, input_file: str, output_dir: str):
+    """
+    Run DrugZ analysis.
+    Returns a list of output file paths.
+    """
     drugz_path = Path(os.getcwd()) / "drugz" / "drugz.py"
     if not drugz_path.exists():
         raise ModuleNotFoundError(
             "Drugz not found. Ensure you have run `git submodule update --init --recursive`."
         )
 
-    # Create output directory if it doesn't exist
-    output_path = Path(output_dir)
+    # Convert paths to absolute Path objects
+    input_path = Path(input_file).absolute()
+    output_path = Path(output_dir).absolute()
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Copy input file to output directory with expected name
-    input_path = Path(input_file)
-    counts_file = output_path / "counts.txt"
-    pd.read_csv(input_path).to_csv(counts_file, sep='\t', index=False)
-
+    # Read contrasts file
     contrasts_df = pd.read_csv(Path(contrasts), sep='\t')
+    output_files = []
     
-    # Generate commands list like the working version
-    commands = []
+    # Process each contrast
     for c in contrasts_df.itertuples():
-        drugz_command = [
-            "python",
-            str(drugz_path.absolute()),
-            "-i",
-            str(counts_file.absolute()),  # Use the copied counts file
-            "-o",
-            str((output_path / f"{c.contrast}_DZ_output.tsv").absolute()),
-            "-c",
-            c.control,
-            "-x",
-            c.treatment,
-            "-unpaired"
-        ]
-        commands.append(drugz_command)
-        logging.info(f"Generated DrugZ command: {' '.join(drugz_command)}")
-    
-    # Run each command as a list
-    for cmd in commands:
         try:
-            subprocess.run(cmd, check=True)
-            logging.info(f"Successfully ran DrugZ command: {' '.join(cmd)}")
+            # Handle input file based on extension
+            counts_file = output_path / f"{c.contrast}_counts.txt"
+            
+            # Read and verify input file
+            try:
+                if input_path.suffix.lower() == '.csv':
+                    count_data = pd.read_csv(input_path)
+                else:
+                    count_data = pd.read_csv(input_path, sep='\t')
+                
+                if count_data.empty:
+                    raise ValueError(f"Input count table is empty: {input_path}")
+                    
+                # Always write as TSV for DrugZ
+                count_data.to_csv(counts_file, sep='\t', index=False)
+                logging.info(f"Prepared count data for DrugZ at {counts_file} with {len(count_data)} rows")
+            except Exception as e:
+                logging.error(f"Error processing input file: {str(e)}")
+                raise
+            
+            output_file = output_path / f"{c.contrast}_DZ_output.tsv"
+            drugz_command = [
+                "python",
+                str(drugz_path.absolute()),
+                "-i",
+                str(counts_file.absolute()),
+                "-o",
+                str(output_file.absolute()),
+                "-c",
+                c.control,
+                "-x",
+                c.treatment,
+                "-unpaired"
+            ]
+            
+            logging.info(f"Running DrugZ command for contrast {c.contrast}: {' '.join(drugz_command)}")
+            
+            # Capture both stdout and stderr
+            result = subprocess.run(
+                drugz_command, 
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            
+            # Log the output
+            if result.stdout:
+                logging.info(f"DrugZ stdout:\n{result.stdout}")
+            if result.stderr:
+                logging.warning(f"DrugZ stderr:\n{result.stderr}")
+            
+            logging.info(f"Successfully ran DrugZ command for contrast {c.contrast}")
+            
+            # Verify output file exists and has content
+            if not output_file.exists():
+                raise FileNotFoundError(f"Expected DrugZ output file not found: {output_file}")
+            
+            try:
+                drugz_data = pd.read_csv(output_file, sep="\t")
+                if drugz_data.empty:
+                    raise ValueError(f"DrugZ output file is empty: {output_file}")
+                logging.info(f"Generated DrugZ output with {len(drugz_data)} rows")
+                output_files.append(str(output_file))
+            except Exception as e:
+                logging.error(f"Error reading DrugZ output: {str(e)}")
+                raise
+
+            # Create new .csv for readability/downstream QA_QC
+            csv_file = output_path / f"{c.contrast}_gDZ.csv"
+            drugz_data.to_csv(csv_file, index=False)
+            output_files.append(str(csv_file))
+            logging.info(f"Generated CSV output: {csv_file}")
+            
         except subprocess.CalledProcessError as e:
-            logging.error(f"DrugZ failed with command: {' '.join(cmd)}")
+            logging.error(f"DrugZ failed for contrast {c.contrast}")
+            logging.error(f"Command: {' '.join(drugz_command)}")
             logging.error(f"Error output: {e.stderr if e.stderr else 'No error output'}")
             raise
+        except Exception as e:
+            logging.error(f"Error processing DrugZ output for contrast {c.contrast}: {str(e)}")
+            raise
 
-        # Create new .csv for readability/downstream QA_QC from .txt output
-        for txt_file in output_path.glob("*_DZ_output.tsv"):
-            csv_file = str(txt_file).replace("_DZ_output.tsv", "_gDZ")
-            df = pd.read_csv(txt_file, sep="\t")
-            df.to_csv(Path(csv_file).with_suffix(".csv"), index=False)
-            logging.info(f"Converted {txt_file} to {csv_file}")
+    return output_files
 
 
 def plot_QA(
@@ -691,36 +805,38 @@ def reverse_dir(input_dir:str, root:str, output_dir:str):
 
 def check_existing_files(input_dir: str, output_dir: str):
     input_path = Path(input_dir)
-
-    unique_existing_dir = set()
+    analyzed_files = set()  # Track specific files that have been analyzed
 
     # Iterate through input_dir for files ending in "_RC" or ".fastq"
     for root, dirs, files in os.walk(input_path):
         if dirs:
             continue
         for file in files:
+            # Skip xlsx files
+            if file.endswith('.xlsx'):
+                continue
+                
             if "_rc" in file.lower() or file.endswith(('.fq', '.fastq')):
-
                 existing_output = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
                 
                 MGK_output_exists = any(existing_output.glob("*_gMGK.csv"))
                 DZ_output_exists = any(existing_output.glob("*_gDZ.csv"))
 
-                # Check if the parent directory exists in the output directory and add to existing_dir list
+                # Check if the parent directory exists in the output directory
                 if MGK_output_exists or DZ_output_exists:
                     print(f"\nAnalysis for {file} exists in {existing_output}")
-                    unique_existing_dir.add(str(existing_output))
-                else:
-                    # Could create directory and continue with loop to avoid doing this in run_pipeline()
-                    #print(f"{existing_output} does not exist in the input directory.")
-                    pass
+                    # Add the full path of the input file to analyzed_files
+                    analyzed_files.add(str(Path(root) / file))
+                    
             elif '_cnttbl' in file.lower():
                 continue
             else:
-                print(f"\nNo files found in {input_dir} with _RC or .fastq in name.")
+                logging.debug(f"Skipping file {file} - not a recognized input file type")
     
-    # Return existing_dir list to skip directory analysis in later functions
-    return unique_existing_dir
+    if not analyzed_files:
+        logging.info(f"No previously analyzed files found in {input_dir}")
+        
+    return analyzed_files  # Return set of specific file paths that have been analyzed
 
 def assign_file_path(root:str, file_str:str, fastq_dirs: set = None):
     if fastq_dirs is None:
@@ -781,17 +897,12 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
     fastq_paths_df = pd.DataFrame(columns=['fastq_dir_path', 'cnttbl_path', 'fastq_out_dir'])
     
     # Create list of screens that have already been analyzed
-    analyzed_screen_list = check_existing_files(input_dir, output_dir)
+    analyzed_files = check_existing_files(input_dir, output_dir)
     
     # Track directories we've processed to avoid duplicates
     processed_dirs = set()
     
     for root, dirs, files in os.walk(input_dir):
-        # Skip already analyzed directories unless overwrite=True
-        if root in analyzed_screen_list and not overwrite:
-            logging.info(f"{root} already analyzed, residing in {output_dir}")
-            continue
-        
         # Skip if no files in directory
         if not files:
             continue
@@ -807,7 +918,12 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
                     if '_cnttbl' in file.lower():
                         cnttbl = str(Path(root) / file)
                     elif '_rc' in file.lower() and '.csv' in file.lower():
-                        rc_files.append(str(Path(root) / file))
+                        file_path = str(Path(root) / file)
+                        # Skip if file has already been analyzed and overwrite is False
+                        if file_path in analyzed_files and not overwrite:
+                            logging.info(f"Skipping {file} - already analyzed")
+                            continue
+                        rc_files.append(file_path)
                 
                 if cnttbl and rc_files:
                     for rc_file in rc_files:
@@ -821,10 +937,15 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
         elif "fastq" in root.lower():
             # Process FASTQ directory
             if root not in processed_dirs and any('_cnttbl' in f.lower() for f in files) and any(f.lower().endswith(('.fq', '.fastq')) for f in files):
+                # Skip if directory has already been analyzed and overwrite is False
+                if str(Path(root)) in analyzed_files and not overwrite:
+                    logging.info(f"Skipping {root} - already analyzed")
+                    continue
+                
                 cnttbl = None
                 fastq_outpath = reverse_dir(input_dir=input_dir, root=root, output_dir=output_dir)
                 
-                # Find control table
+                # Find contrast table
                 for file in files:
                     if '_cnttbl' in file.lower():
                         cnttbl = str(Path(root) / file)
@@ -837,7 +958,7 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
                         'fastq_out_dir': str(fastq_outpath)
                     }
                     processed_dirs.add(root)
-                    logging.info(f"Added FASTQ directory {root} for analysis with {len([f for f in files if f.lower().endswith(('.fq', '.fastq'))])} FASTQ files")
+                    logging.info(f"Added FASTQ directory {root} for analysis")
 
     # Process read count files
     if not rc_paths_df.empty:
@@ -846,17 +967,30 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
                 logging.warning(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
                 continue
 
-            mageck_test(input_file=row.count_file_path, 
-                       contrasts=row.cnttbl_path, 
-                       output_dir=row.rc_out_dir)
-            run_drugz(input_file=row.count_file_path, 
-                     contrasts=row.cnttbl_path, 
-                     output_dir=row.rc_out_dir)
-            logging.info(f"Finished analysis on read count files in {root}")
+            # Skip if file has already been analyzed and overwrite is False
+            if row.count_file_path in analyzed_files and not overwrite:
+                logging.info(f"Skipping analysis for {row.count_file_path} - already analyzed")
+                continue
+
+            test_files = mageck_test(input_file=row.count_file_path, 
+                                   contrasts=row.cnttbl_path, 
+                                   output_dir=row.rc_out_dir)
+            logging.info(f"MAGeCK test results written to: {', '.join(test_files)}")
+            
+            drugz_files = run_drugz(input_file=row.count_file_path, 
+                                  contrasts=row.cnttbl_path, 
+                                  output_dir=row.rc_out_dir)
+            logging.info(f"DrugZ results written to: {', '.join(drugz_files)}")
+            logging.info(f"Finished analysis on read count files in {row.rc_out_dir}")
 
     # Process FASTQ files
     if not fastq_paths_df.empty:
         for _, row in fastq_paths_df.iterrows():
+            # Skip if directory has already been analyzed and overwrite is False
+            if row.fastq_dir_path in analyzed_files and not overwrite:
+                logging.info(f"Skipping analysis for {row.fastq_dir_path} - already analyzed")
+                continue
+
             sample_sheet = generate_sample_sheet(row.fastq_dir_path)
             logging.info(f"Generated sample sheet for {row.fastq_dir_path} with {len(sample_sheet)} samples")
 
@@ -864,16 +998,30 @@ def run_pipeline(input_dir:str, output_dir:str, overwrite:bool = False):
                 logging.warning(f"Skipping analysis for files in {row.cnttbl_path} due to validation error.")
                 continue
 
-            count_df = mageck_count(sample_sheet=sample_sheet, 
-                                  library_file=library, 
-                                  output_dir=row.fastq_out_dir)
-            mageck_test(input_file=count_df, 
-                       contrasts=row.cnttbl_path, 
-                       output_dir=row.fastq_out_dir)
-            run_drugz(input_file=count_df, 
-                     contrasts=row.cnttbl_path, 
-                     output_dir=row.fastq_out_dir)
-            logging.info(f"Finished analysis on FASTQ files in {root}")
+            count_file = mageck_count(
+                sample_sheet=sample_sheet, 
+                library_file=library,
+                output_dir=row.fastq_out_dir,
+                contrasts_file=row.cnttbl_path
+            )
+            logging.info(f"Count results written to: {count_file}")
+            
+            # Process the count file with all contrasts
+            test_files = mageck_test(
+                input_file=count_file,
+                contrasts=row.cnttbl_path, 
+                output_dir=row.fastq_out_dir
+            )
+            logging.info(f"Test results written to: {', '.join(test_files)}")
+            
+            drugz_files = run_drugz(
+                input_file=count_file, 
+                contrasts=row.cnttbl_path, 
+                output_dir=row.fastq_out_dir
+            )
+            logging.info(f"DrugZ results written to: {', '.join(drugz_files)}")
+            
+            logging.info(f"Finished analysis on FASTQ files in {row.fastq_out_dir}")
 
     logging.info("Pipeline execution completed")
 
@@ -885,4 +1033,4 @@ if __name__ == "__main__":
     input_folder = r"C:\Users\spejo\Documents\1_CRISPR_analysis_test_input"
     output_folder = r"C:\Users\spejo\Documents\2_CRISPR_analysis_test_output"
 
-    run_pipeline(input_folder, output_folder, overwrite=True)
+    run_pipeline(input_folder, output_folder, overwrite=False)
