@@ -44,6 +44,7 @@ FROM python:3.10-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas0 \
     liblapack3 \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
@@ -57,6 +58,5 @@ WORKDIR /app
 RUN mkdir -p /fastq /library /output && \
     chmod 777 /fastq /library /output
 
-# Set default command
-ENTRYPOINT ["mageck"]
-CMD ["--version"]
+# Remove ENTRYPOINT and use CMD only
+CMD ["mageck", "--version"]
