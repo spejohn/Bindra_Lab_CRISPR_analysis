@@ -15,21 +15,17 @@ DEFAULT_ADJUST_METHOD = "fdr"  # Multiple testing adjustment method
 DEFAULT_FDR_THRESHOLD = 0.05  # FDR threshold for significant hits
 
 # File patterns
-FASTQ_PATTERNS = [
-    "*.fastq", "*.fq",          # Standard FASTQ files
-    "*.fastq.gz", "*.fq.gz"     # Gzipped FASTQ files
-]
+FASTQ_PATTERNS = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
+CONTRAST_TABLE_PATTERN = "*contrast*.txt"
+READ_COUNT_PATTERN = "*count*.csv"
+RESULTS_MAGECK_PATTERN = "*_gMGK.csv"
+RESULTS_DRUGZ_PATTERN = "*_gDZ.csv"
+DESIGN_MATRIX_PATTERN = "*design*.txt"  # New pattern for design matrix files
 
 # Required columns
 LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "gene"]
 CONTRAST_REQUIRED_COLUMNS = ["contrast", "treatment", "control"]
 SAMPLE_SHEET_COLUMNS = ["sample_name", "fastq_path"]
-
-# File name patterns
-CONTRAST_TABLE_PATTERN = "*_cnttbl*"
-READ_COUNT_PATTERN = "*_RC*.csv"
-RESULTS_MAGECK_PATTERN = "*_gMGK.csv"
-RESULTS_DRUGZ_PATTERN = "*_gDZ.csv"
 
 # Sample naming patterns
 SAMPLE_NAMING_PATTERNS = {
@@ -75,4 +71,13 @@ def get_drugz_path():
 
 # Timeouts
 DOCKER_RUN_TIMEOUT = 3600  # 1 hour in seconds
-DRUGZ_RUN_TIMEOUT = 900    # 15 minutes in seconds 
+DRUGZ_RUN_TIMEOUT = 900    # 15 minutes in seconds
+
+# MLE specific configuration
+DEFAULT_MLE_NORM_METHOD = "median"  # Default normalization method for MLE analysis
+MLE_DESIGN_MATRIX_PATTERNS = [      # Common file patterns for design matrix files
+    "*design_matrix.txt",
+    "*design.txt",
+    "*design_matrix.csv",
+    "*design.csv"
+]

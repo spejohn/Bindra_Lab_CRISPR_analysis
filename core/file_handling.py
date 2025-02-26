@@ -67,9 +67,12 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
     
     # Dictionary to store input files
     input_files = {
-        'fastq_dirs': {},  # Format: {dir_path: {'contrast_table': path, 'fastq_files': [paths]}}
-        'read_counts': {}  # Format: {file_path: {'contrast_table': path}}
+        'fastq_dirs': {},  # Format: {dir_path: {'contrast_table': path, 'design_matrix': path, 'fastq_files': [paths]}}
+        'read_counts': {}  # Format: {file_path: {'contrast_table': path, 'design_matrix': path}}
     }
+    
+    # Define patterns for recognizing design matrix files
+    DESIGN_MATRIX_PATTERN = "*design*.txt"
     
     fastq_dirs = {}  # Track FASTQ directories we've already processed
     
@@ -85,6 +88,14 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
         cnttbl_files = [f for f in files if fnmatch_lower(f, CONTRAST_TABLE_PATTERN)]
         cnttbl_path = str(root_path / cnttbl_files[0]) if cnttbl_files else None
         
+        # Find the design matrix (if any) in this directory
+        design_files = [f for f in files if fnmatch_lower(f, DESIGN_MATRIX_PATTERN)]
+        design_path = str(root_path / design_files[0]) if design_files else None
+        
+        # Log if both files are found
+        if cnttbl_path and design_path:
+            logging.info(f"Found both contrast table and design matrix in {root}")
+        
         # Check if this is a read count directory
         if "read_count" in root.lower():
             # Find read count files (RC files)
@@ -95,7 +106,8 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
                 for rc_file in rc_files:
                     rc_path = str(root_path / rc_file)
                     input_files['read_counts'][rc_path] = {
-                        'contrast_table': cnttbl_path
+                        'contrast_table': cnttbl_path,
+                        'design_matrix': design_path
                     }
                 
                 logging.info(f"Found {len(rc_files)} read count files in {root}")
@@ -111,12 +123,19 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
                 fastq_dirs[root] = True  # Mark this directory as processed
                 input_files['fastq_dirs'][root] = {
                     'contrast_table': cnttbl_path,
+                    'design_matrix': design_path,
                     'fastq_files': fastq_files
                 }
                 
                 logging.info(f"Found {len(fastq_files)} FASTQ files in {root}")
     
+    # Count the number of design matrices found
+    design_matrices_count = sum(1 for _, info in input_files['read_counts'].items() if info.get('design_matrix') is not None)
+    design_matrices_count += sum(1 for _, info in input_files['fastq_dirs'].items() if info.get('design_matrix') is not None)
+    
     logging.info(f"Found {len(input_files['read_counts'])} read count files and {len(input_files['fastq_dirs'])} FASTQ directories")
+    logging.info(f"Found {design_matrices_count} design matrices for MLE analysis")
+    
     return input_files
 
 
@@ -196,15 +215,18 @@ def create_experiment_dirs(base_dir: str, experiment_name: str) -> Dict[str, str
     base_path = Path(base_dir)
     experiment_path = base_path / experiment_name
     
-    # Create subdirectories
+    # Create standardized subdirectories
     dirs = {
         'experiment': str(experiment_path),
+        'logs': str(experiment_path / 'logs'),  # Keep logs at experiment level
         'counts': str(experiment_path / 'counts'),
-        'mageck': str(experiment_path / 'mageck'),
+        'samplesheets': str(experiment_path / 'samplesheets'),
+        'library': str(experiment_path / 'library'),
+        'rra': str(experiment_path / 'RRA'),  # Renamed from 'mageck' to 'RRA' for clarity
+        'mle': str(experiment_path / 'MLE'),  # New directory for MLE analysis
         'drugz': str(experiment_path / 'drugz'),
         'qc': str(experiment_path / 'qc'),
-        'figures': str(experiment_path / 'figures'),
-        'logs': str(experiment_path / 'logs')
+        'figures': str(experiment_path / 'figures')
     }
     
     # Create all directories
@@ -212,4 +234,63 @@ def create_experiment_dirs(base_dir: str, experiment_name: str) -> Dict[str, str
         os.makedirs(dir_path, exist_ok=True)
     
     logging.info(f"Created directory structure for experiment: {experiment_name}")
-    return dirs 
+    return dirs
+
+
+def identify_analyzed_experiments(output_dir: str) -> Dict[str, Dict[str, bool]]:
+    """
+    Identify experiments that have already been analyzed in the output directory.
+    
+    Args:
+        output_dir: Path to the output directory
+        
+    Returns:
+        Dictionary mapping experiment names to status of analyses
+    """
+    analyzed_experiments = {}
+    
+    if not os.path.exists(output_dir):
+        return analyzed_experiments
+    
+    # Check for experiment directories
+    for exp_dir in os.listdir(output_dir):
+        exp_path = os.path.join(output_dir, exp_dir)
+        
+        if not os.path.isdir(exp_path):
+            continue
+        
+        # Initialize status for this experiment
+        analyzed_experiments[exp_dir] = {
+            "count_files": False,
+            "rra_analysis": False,
+            "mle_analysis": False,
+            "drugz_analysis": False,
+            "qc_plots": False
+        }
+        
+        # Check for count files
+        count_dir = os.path.join(exp_path, "counts")
+        if os.path.exists(count_dir) and os.listdir(count_dir):
+            analyzed_experiments[exp_dir]["count_files"] = True
+        
+        # Check for RRA analysis
+        rra_dir = os.path.join(exp_path, "RRA")
+        if os.path.exists(rra_dir) and os.listdir(rra_dir):
+            analyzed_experiments[exp_dir]["rra_analysis"] = True
+        
+        # Check for MLE analysis
+        mle_dir = os.path.join(exp_path, "MLE")
+        if os.path.exists(mle_dir) and os.listdir(mle_dir):
+            analyzed_experiments[exp_dir]["mle_analysis"] = True
+        
+        # Check for DrugZ analysis
+        drugz_dir = os.path.join(exp_path, "drugz")
+        if os.path.exists(drugz_dir) and os.listdir(drugz_dir):
+            analyzed_experiments[exp_dir]["drugz_analysis"] = True
+        
+        # Check for QC plots
+        qc_dir = os.path.join(exp_path, "qc")
+        if os.path.exists(qc_dir) and os.listdir(qc_dir):
+            analyzed_experiments[exp_dir]["qc_plots"] = True
+    
+    return analyzed_experiments 

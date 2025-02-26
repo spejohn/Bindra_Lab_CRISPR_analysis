@@ -44,7 +44,9 @@ from analysis_pipeline.analysis.sample_processing import (
 )
 from analysis_pipeline.analysis.mageck_analysis import (
     process_contrasts,
-    run_drugz_analysis
+    run_drugz_analysis,
+    find_design_matrix,
+    process_mle_analysis
 )
 
 # Import QC modules
@@ -68,51 +70,72 @@ def run_pipeline(
     essential_genes: Optional[Dict[str, List[str]]] = None,
     overwrite: bool = False,
     skip_drugz: bool = False,
-    skip_qc: bool = False
+    skip_qc: bool = False,
+    skip_mle: bool = False,
+    use_docker: bool = True
 ) -> Dict[str, Any]:
     """
-    Run the CRISPR screening analysis pipeline.
+    Run the entire analysis pipeline on a directory of fastq files or count tables.
     
     Args:
-        input_dir: Directory containing input files (FASTQ or count tables)
+        input_dir: Directory containing FASTQ files or count tables
         output_dir: Directory for output files
         library_file: Path to the library file
-        experiment_name: Name of the experiment
-        contrasts_file: Path to the contrasts file
-        norm_method: Normalization method
-        fdr_threshold: FDR threshold for significance
-        sample_sheet: Path to the sample sheet
-        essential_genes: Dictionary of essential gene lists
+        experiment_name: Name for the experiment
+        contrasts_file: Path to the contrasts file (for differential analysis)
+        norm_method: Normalization method for MAGeCK
+        fdr_threshold: FDR threshold for significant genes
+        sample_sheet: Sample sheet for mapping sample names to conditions
+        essential_genes: Dictionary of essential genes for QC
         overwrite: Whether to overwrite existing output files
-        skip_drugz: Whether to skip DrugZ analysis
-        skip_qc: Whether to skip quality control plotting
+        skip_drugz: Skip DrugZ analysis
+        skip_qc: Skip quality control checks
+        skip_mle: Skip MAGeCK MLE analysis
+        use_docker: Use Docker containers for analysis tools when available
         
     Returns:
-        Dictionary of results and output files
+        Dictionary of results
     """
+    # Check Docker availability if requested
+    if use_docker:
+        from analysis_pipeline.core.utils import check_docker_available
+        docker_available = check_docker_available()
+        if not docker_available:
+            logging.warning("Docker is not available or required images are missing. Falling back to local installations.")
+            use_docker = False
+    
+    # Create experiment directories
+    dirs = create_experiment_dirs(output_dir, experiment_name)
+    
     # Setup logging
     log_file = setup_logging(output_dir, experiment_name)
     
     # Log system information
     log_system_info()
     
-    # Log input parameters
-    log_input_parameters({
+    logging.info(f"Starting pipeline for {experiment_name}")
+    logging.info(f"Input directory: {input_dir}")
+    logging.info(f"Output directory: {output_dir}")
+    logging.info(f"Library file: {library_file}")
+    
+    if contrasts_file:
+        logging.info(f"Contrasts file: {contrasts_file}")
+    
+    # Initialize results dictionary
+    results = {
+        "experiment_name": experiment_name,
         "input_dir": input_dir,
         "output_dir": output_dir,
         "library_file": library_file,
-        "experiment_name": experiment_name,
-        "contrasts_file": contrasts_file,
-        "norm_method": norm_method,
-        "fdr_threshold": fdr_threshold,
-        "sample_sheet": sample_sheet,
-        "overwrite": overwrite,
-        "skip_drugz": skip_drugz,
-        "skip_qc": skip_qc
-    })
-    
-    # Create experiment directories
-    dirs = create_experiment_dirs(output_dir, experiment_name)
+        "dirs": dirs,
+        "log_file": log_file,
+        "sample_sheet": None,
+        "count_files": {},
+        "rra_results": {},
+        "mle_results": {},
+        "drugz_results": {},
+        "qc_results": {}
+    }
     
     # Verify Docker
     logging.info("Verifying Docker installation...")
@@ -143,28 +166,14 @@ def run_pipeline(
     logging.info(f"Finding input files in {input_dir}")
     input_files = find_input_files(input_dir)
     
-    # Initialize results
-    results = {
-        "experiment_name": experiment_name,
-        "input_dir": input_dir,
-        "output_dir": output_dir,
-        "library_file": library_file,
-        "log_file": log_file,
-        "directories": dirs,
-        "count_files": {},
-        "mageck_results": {},
-        "drugz_results": {},
-        "qc_plots": {}
-    }
-    
     # Initialize a DataFrame to track read count files
     read_count_df = pd.DataFrame(columns=["file", "processed"])
     
     # Process read count files if present
-    if input_files["count_tables"]:
-        logging.info(f"Found {len(input_files['count_tables'])} read count files")
+    if input_files["read_counts"]:
+        logging.info(f"Found {len(input_files['read_counts'])} read count files")
         
-        for rc_file in input_files["count_tables"]:
+        for rc_file, info in input_files["read_counts"].items():
             if rc_file in existing_files and not overwrite:
                 logging.info(f"Skipping previously processed read count file: {rc_file}")
                 read_count_df = read_count_df.append({"file": rc_file, "processed": True}, ignore_index=True)
@@ -187,7 +196,7 @@ def run_pipeline(
     if input_files["fastq_dirs"]:
         logging.info(f"Found {len(input_files['fastq_dirs'])} FASTQ directories")
         
-        for fastq_dir in input_files["fastq_dirs"]:
+        for fastq_dir, info in input_files["fastq_dirs"].items():
             # Create output directory for this FASTQ directory
             fastq_output_dir = reverse_dir(fastq_dir, input_dir, dirs["counts"])
             ensure_output_dir(fastq_output_dir)
@@ -249,120 +258,115 @@ def run_pipeline(
         for name, count_file in results["count_files"].items():
             logging.info(f"Running MAGeCK analysis for count file: {count_file}")
             
-            mageck_output_dir = os.path.join(dirs["mageck"], name)
-            ensure_output_dir(mageck_output_dir)
-            
-            # Run MAGeCK analysis
-            mageck_results = process_contrasts(
+            mageck_output = process_contrasts(
                 contrasts_file=contrasts_file,
                 count_table=count_file,
-                output_dir=mageck_output_dir,
+                output_dir=dirs["rra"],
                 norm_method=norm_method,
                 overwrite=overwrite
             )
             
-            results["mageck_results"][name] = mageck_results
+            if "error" in mageck_output:
+                logging.error(f"Error in MAGeCK analysis for {name}: {mageck_output['error']}")
+            else:
+                results["rra_results"][name] = mageck_output
+                logging.info(f"Completed MAGeCK analysis for {name}")
             
-            # Run DrugZ analysis if not skipped
-            if not skip_drugz:
-                logging.info(f"Running DrugZ analysis for count file: {count_file}")
+            # Check if this experiment has a design matrix for MLE analysis
+            contrast_dir = os.path.dirname(contrasts_file)
+            design_matrix = None
+            
+            # First check if we already have a design matrix from input files
+            fastq_dir_info = next((info for key, info in input_files["fastq_dirs"].items() if os.path.basename(key) == name), None)
+            if fastq_dir_info and fastq_dir_info.get("design_matrix"):
+                design_matrix = fastq_dir_info["design_matrix"]
+            else:
+                # Try to find a design matrix in the same directory as the contrasts file
+                design_matrix = find_design_matrix(contrast_dir)
+            
+            # Run MLE analysis if design matrix is available and not skipped
+            if design_matrix and not skip_mle:
+                logging.info(f"Design matrix found for {name}, running MAGeCK MLE analysis")
                 
-                drugz_output_dir = os.path.join(dirs["drugz"], name)
-                ensure_output_dir(drugz_output_dir)
-                
-                # Run DrugZ analysis
-                drugz_results = run_drugz_analysis(
+                mle_output = process_mle_analysis(
                     count_table=count_file,
-                    contrasts_file=contrasts_file,
-                    output_dir=drugz_output_dir,
+                    design_matrix=design_matrix,
+                    output_dir=dirs["mle"],
+                    experiment_name=f"{experiment_name}_{name}",
+                    norm_method=norm_method,
                     overwrite=overwrite
                 )
                 
-                results["drugz_results"][name] = drugz_results
+                if isinstance(mle_output, dict) and "error" in mle_output:
+                    logging.error(f"Error in MAGeCK MLE analysis for {name}: {mle_output['error']}")
+                else:
+                    results["mle_results"][name] = mle_output
+                    logging.info(f"Completed MAGeCK MLE analysis for {name}")
+            elif not skip_mle:
+                logging.info(f"No design matrix found for {name}, skipping MAGeCK MLE analysis")
     
-    # Run quality control plots if not skipped
-    if not skip_qc:
-        logging.info("Generating quality control plots")
+    # Run DrugZ analysis if not skipped
+    if not skip_drugz and contrasts_file and os.path.exists(contrasts_file):
+        logging.info("Running DrugZ analysis...")
         
-        qc_plots = {}
-        
-        # For each merged count file, generate count distribution plots
         for name, count_file in results["count_files"].items():
-            logging.info(f"Generating count distribution plots for: {count_file}")
-            
-            count_plots_dir = os.path.join(dirs["qc"], f"{name}_counts")
-            ensure_output_dir(count_plots_dir)
-            
-            # Plot count distribution
-            count_plots = plot_count_distribution(
+            drugz_results = run_drugz_analysis(
                 count_table=count_file,
-                output_dir=count_plots_dir,
-                output_prefix=f"{name}_counts"
+                contrasts_file=contrasts_file,
+                output_dir=dirs["drugz"],
+                overwrite=overwrite,
+                use_docker=use_docker
             )
             
-            qc_plots[f"{name}_counts"] = count_plots
-            
-            # Plot guide correlations
-            corr_plots_dir = os.path.join(dirs["qc"], f"{name}_correlations")
-            ensure_output_dir(corr_plots_dir)
-            
-            corr_plots = plot_guide_correlations(
-                count_table=count_file,
-                output_dir=corr_plots_dir,
-                output_prefix=f"{name}_correlations"
-            )
-            
-            qc_plots[f"{name}_correlations"] = corr_plots
+            if drugz_results and "error" not in drugz_results:
+                results["drugz_results"][name] = drugz_results
+                logging.info(f"Completed DrugZ analysis for {name}")
+            else:
+                error_msg = drugz_results.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Error in DrugZ analysis for {name}: {error_msg}")
+    
+    # Run QC plots if not skipped
+    if not skip_qc:
+        logging.info("Generating QC plots...")
         
-        # For each MAGeCK result, generate volcano plots
-        for name, mageck_result in results["mageck_results"].items():
-            if "error" in mageck_result:
-                continue
+        for name, count_file in results["count_files"].items():
+            try:
+                qc_plots = {}
                 
-            mageck_plots_dir = os.path.join(dirs["qc"], f"{name}_mageck")
-            ensure_output_dir(mageck_plots_dir)
-            
-            # For each contrast, plot MAGeCK results
-            for contrast, files in mageck_result.items():
-                if "error" in files:
-                    continue
-                    
-                if "gene_summary" not in files:
-                    continue
-                
-                logging.info(f"Generating MAGeCK plots for contrast: {contrast}")
-                
-                mageck_plots = plot_mageck_results(
-                    gene_summary_file=files["gene_summary"],
-                    output_dir=mageck_plots_dir,
-                    fdr_threshold=fdr_threshold,
-                    essential_genes=essential_genes,
-                    output_prefix=f"{name}_{contrast}"
+                # Plot count distribution
+                count_dist_plot = plot_count_distribution(
+                    count_file=count_file,
+                    output_dir=dirs["qc"],
+                    output_prefix=f"{experiment_name}_{name}"
                 )
+                if count_dist_plot:
+                    qc_plots["count_distribution"] = count_dist_plot
                 
-                qc_plots[f"{name}_{contrast}_mageck"] = mageck_plots
-            
-            # If there are multiple contrasts, plot essential gene enrichment
-            gene_summary_files = {}
-            for contrast, files in mageck_result.items():
-                if "error" in files or "gene_summary" not in files:
-                    continue
-                gene_summary_files[contrast] = files["gene_summary"]
-            
-            if len(gene_summary_files) > 1:
-                logging.info(f"Generating essential gene enrichment plot for {name}")
-                
-                enrichment_plots = plot_essential_gene_enrichment(
-                    gene_summary_files=gene_summary_files,
-                    output_dir=mageck_plots_dir,
-                    essential_genes=essential_genes,
-                    fdr_threshold=fdr_threshold,
-                    output_prefix=f"{name}_enrichment"
+                # Plot guide correlations
+                guide_corr_plot = plot_guide_correlations(
+                    count_file=count_file,
+                    output_dir=dirs["qc"],
+                    output_prefix=f"{experiment_name}_{name}"
                 )
+                if guide_corr_plot:
+                    qc_plots["guide_correlations"] = guide_corr_plot
                 
-                qc_plots[f"{name}_enrichment"] = enrichment_plots
-        
-        results["qc_plots"] = qc_plots
+                # Plot essential gene enrichment if available
+                if essential_genes:
+                    for gene_set_name, gene_list in essential_genes.items():
+                        gene_enrichment_plot = plot_essential_gene_enrichment(
+                            count_file=count_file,
+                            gene_list=gene_list,
+                            output_dir=dirs["qc"],
+                            output_prefix=f"{experiment_name}_{name}_{gene_set_name}"
+                        )
+                        if gene_enrichment_plot:
+                            qc_plots[f"essential_gene_enrichment_{gene_set_name}"] = gene_enrichment_plot
+                
+                results["qc_results"][name] = qc_plots
+                
+            except Exception as e:
+                logging.error(f"Error generating QC plots for {name}: {e}")
     
     logging.info("Pipeline completed successfully")
     return results
@@ -372,45 +376,71 @@ def main():
     """Command-line entry point for the CRISPR screening analysis pipeline."""
     parser = argparse.ArgumentParser(description="CRISPR Screening Analysis Pipeline")
     
-    # Required arguments
-    parser.add_argument("--input-dir", required=True, help="Directory containing input files (FASTQ or count tables)")
-    parser.add_argument("--output-dir", required=True, help="Directory for output files")
-    parser.add_argument("--library-file", required=True, help="Path to the library file")
+    # Required argument - just the input directory
+    parser.add_argument("input_dir", help="Directory containing CRISPR screen data (FASTQ or count tables)")
     
     # Optional arguments
-    parser.add_argument("--experiment-name", default="experiment", help="Name of the experiment")
-    parser.add_argument("--contrasts-file", help="Path to the contrasts file")
+    parser.add_argument("-o", "--output-dir", help="Directory for output files (defaults to input_dir/results)")
+    parser.add_argument("-l", "--library-file", help="Path to the library file (defaults to input_dir/library.csv)")
+    parser.add_argument("-e", "--experiment-name", default="experiment", help="Name of the experiment")
+    parser.add_argument("-c", "--contrasts-file", help="Path to the contrasts file (defaults to input_dir/contrasts.csv)")
     parser.add_argument("--norm-method", default=DEFAULT_NORM_METHOD, help="Normalization method")
     parser.add_argument("--fdr-threshold", type=float, default=DEFAULT_FDR_THRESHOLD, help="FDR threshold for significance")
-    parser.add_argument("--sample-sheet", help="Path to the sample sheet")
+    parser.add_argument("-s", "--sample-sheet", help="Path to the sample sheet (will be auto-generated if not provided)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip quality control plotting")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
+    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers for analysis tools when available")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     
     args = parser.parse_args()
     
+    # Set default paths if not provided
+    input_dir = os.path.abspath(args.input_dir)
+    output_dir = args.output_dir or os.path.join(input_dir, "results")
+    library_file = args.library_file or os.path.join(input_dir, "library.csv")
+    contrasts_file = args.contrasts_file or os.path.join(input_dir, "contrasts.csv")
+    
+    # Check if required files exist
+    if not os.path.exists(library_file):
+        print(f"Error: Library file not found at {library_file}")
+        print("Please provide a valid library file path with --library-file")
+        return 1
+    
+    if args.contrasts_file is None and not os.path.exists(contrasts_file):
+        print(f"Warning: No contrasts file found at {contrasts_file}")
+        print("Differential analysis will be skipped.")
+        contrasts_file = None
+    
+    # Set logging level
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.getLogger().setLevel(log_level)
+    
     # Run the pipeline
     results = run_pipeline(
-        input_dir=args.input_dir,
-        output_dir=args.output_dir,
-        library_file=args.library_file,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        library_file=library_file,
         experiment_name=args.experiment_name,
-        contrasts_file=args.contrasts_file,
+        contrasts_file=contrasts_file,
         norm_method=args.norm_method,
         fdr_threshold=args.fdr_threshold,
         sample_sheet=args.sample_sheet,
         overwrite=args.overwrite,
         skip_drugz=args.skip_drugz,
-        skip_qc=args.skip_qc
+        skip_qc=args.skip_qc,
+        skip_mle=args.skip_mle,
+        use_docker=args.use_docker
     )
     
     if "error" in results:
         print(f"Error: {results['error']}")
-        sys.exit(1)
+        return 1
     
     print("Pipeline completed successfully")
     print(f"Log file: {results['log_file']}")
+    print(f"Results directory: {output_dir}")
     
     return 0
 

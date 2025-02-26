@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  mageck:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile.mageck
+    image: crispr-analysis/mageck:latest
+    volumes:
+      - ${FASTQ_DIR:-./fastq}:/fastq
+      - ${LIBRARY_DIR:-./library}:/library
+      - ${OUTPUT_DIR:-./output}:/output
+    working_dir: /app
+    command: ["mageck", "--version"]
+
+  drugz:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile.drugz
+    image: crispr-analysis/drugz:latest
+    volumes:
+      - ${COUNT_DIR:-./count}:/count
+      - ${DESIGN_DIR:-./design}:/design
+      - ${OUTPUT_DIR:-./output}:/output
+    working_dir: /app
+    command: ["python", "/drugz/drugz.py", "--help"] 
