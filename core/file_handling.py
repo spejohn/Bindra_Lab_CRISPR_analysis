@@ -1,0 +1,215 @@
+"""
+File and directory handling utilities for CRISPR analysis pipeline.
+"""
+
+import os
+import re
+import logging
+import shutil
+import pandas as pd
+from pathlib import Path
+from typing import Set, List, Dict, Any, Optional, Union
+
+from analysis_pipeline.core.config import (
+    CONTRAST_TABLE_PATTERN,
+    READ_COUNT_PATTERN,
+    FASTQ_PATTERNS
+)
+
+
+def reverse_dir(input_dir: str, root: str, output_dir: str) -> Path:
+    """
+    Create an output directory structure mirroring the input directory structure.
+    
+    Args:
+        input_dir: Base input directory
+        root: Current directory being processed
+        output_dir: Base output directory
+        
+    Returns:
+        Path to the mirrored directory in the output directory
+    """
+    try:
+        # Use regex to find and remove the input_dir path from root
+        if input_dir in root:
+            dir_str = re.sub(f'^{re.escape(input_dir)}', '', root)
+        else:
+            logging.warning(f"Input directory string not found for {root} file.")
+            dir_str = Path(root).name
+
+        # Combine the paths to mirror the input directory
+        out_path = Path(output_dir) / Path(dir_str.lstrip('\\/'))
+
+        # Create dir if doesn't exist
+        os.makedirs(out_path, exist_ok=True)
+        
+        return out_path
+        
+    except Exception as e:
+        logging.error(f"Error creating mirrored directory: {str(e)}")
+        # Fallback to using just the name of the root directory
+        fallback_path = Path(output_dir) / Path(root).name
+        os.makedirs(fallback_path, exist_ok=True)
+        return fallback_path
+
+
+def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Scan the input directory for FASTQ files and read count tables.
+    
+    Args:
+        input_dir: Input directory to scan
+        
+    Returns:
+        Dictionary with input files organized by type
+    """
+    input_path = Path(input_dir)
+    
+    # Dictionary to store input files
+    input_files = {
+        'fastq_dirs': {},  # Format: {dir_path: {'contrast_table': path, 'fastq_files': [paths]}}
+        'read_counts': {}  # Format: {file_path: {'contrast_table': path}}
+    }
+    
+    fastq_dirs = {}  # Track FASTQ directories we've already processed
+    
+    # Walk through the input directory
+    for root, dirs, files in os.walk(input_path):
+        root_path = Path(root)
+        
+        # Skip if no files in directory
+        if not files:
+            continue
+        
+        # Find the contrast table (if any) in this directory
+        cnttbl_files = [f for f in files if fnmatch_lower(f, CONTRAST_TABLE_PATTERN)]
+        cnttbl_path = str(root_path / cnttbl_files[0]) if cnttbl_files else None
+        
+        # Check if this is a read count directory
+        if "read_count" in root.lower():
+            # Find read count files (RC files)
+            rc_files = [f for f in files if fnmatch_lower(f, READ_COUNT_PATTERN)]
+            
+            if rc_files and cnttbl_path:
+                # Process each read count file
+                for rc_file in rc_files:
+                    rc_path = str(root_path / rc_file)
+                    input_files['read_counts'][rc_path] = {
+                        'contrast_table': cnttbl_path
+                    }
+                
+                logging.info(f"Found {len(rc_files)} read count files in {root}")
+                
+        # Check if this is a FASTQ directory
+        elif "fastq" in root.lower() and root not in fastq_dirs:
+            # Check for FASTQ files
+            fastq_files = []
+            for pattern in FASTQ_PATTERNS:
+                fastq_files.extend([str(root_path / f) for f in files if fnmatch_lower(f, pattern)])
+            
+            if fastq_files and cnttbl_path:
+                fastq_dirs[root] = True  # Mark this directory as processed
+                input_files['fastq_dirs'][root] = {
+                    'contrast_table': cnttbl_path,
+                    'fastq_files': fastq_files
+                }
+                
+                logging.info(f"Found {len(fastq_files)} FASTQ files in {root}")
+    
+    logging.info(f"Found {len(input_files['read_counts'])} read count files and {len(input_files['fastq_dirs'])} FASTQ directories")
+    return input_files
+
+
+def fnmatch_lower(filename: str, pattern: str) -> bool:
+    """
+    Case-insensitive file pattern matching.
+    
+    Args:
+        filename: Filename to match
+        pattern: Pattern to match against (with wildcards)
+        
+    Returns:
+        True if the filename matches the pattern, False otherwise
+    """
+    import fnmatch
+    return fnmatch.fnmatch(filename.lower(), pattern.lower())
+
+
+def ensure_output_dir(output_dir: str) -> None:
+    """
+    Ensure the output directory exists.
+    
+    Args:
+        output_dir: Path to the output directory
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    logging.info(f"Output directory created/verified: {output_dir}")
+
+
+def make_count_table(rc_file: str, output_dir: Optional[str] = None) -> str:
+    """
+    Convert a read count table from CSV to tab-delimited format for MAGeCK.
+    
+    Args:
+        rc_file: Path to read count CSV file
+        output_dir: Optional output directory (defaults to same as rc_file)
+        
+    Returns:
+        Path to the tab-delimited count table
+    """
+    try:
+        rc_path = Path(rc_file)
+        out_dir = Path(output_dir) if output_dir else rc_path.parent
+        
+        # Ensure output directory exists
+        os.makedirs(out_dir, exist_ok=True)
+        
+        # Load the read count table
+        rc_data = pd.read_csv(rc_path)
+        logging.info(f"Loaded read count table: {rc_file} with {len(rc_data)} rows")
+        
+        # Create the count table filename
+        count_file = out_dir / rc_path.name.replace(".csv", ".count.txt")
+        
+        # Save as tab-delimited
+        rc_data.to_csv(count_file, sep="\t", index=False)
+        logging.info(f"Created tab-delimited count table: {count_file}")
+        
+        return str(count_file)
+        
+    except Exception as e:
+        logging.error(f"Error creating count table from {rc_file}: {str(e)}")
+        raise
+
+
+def create_experiment_dirs(base_dir: str, experiment_name: str) -> Dict[str, str]:
+    """
+    Create standard directory structure for an experiment.
+    
+    Args:
+        base_dir: Base directory for the experiment
+        experiment_name: Name of the experiment
+        
+    Returns:
+        Dictionary with paths to created directories
+    """
+    base_path = Path(base_dir)
+    experiment_path = base_path / experiment_name
+    
+    # Create subdirectories
+    dirs = {
+        'experiment': str(experiment_path),
+        'counts': str(experiment_path / 'counts'),
+        'mageck': str(experiment_path / 'mageck'),
+        'drugz': str(experiment_path / 'drugz'),
+        'qc': str(experiment_path / 'qc'),
+        'figures': str(experiment_path / 'figures'),
+        'logs': str(experiment_path / 'logs')
+    }
+    
+    # Create all directories
+    for dir_path in dirs.values():
+        os.makedirs(dir_path, exist_ok=True)
+    
+    logging.info(f"Created directory structure for experiment: {experiment_name}")
+    return dirs 
