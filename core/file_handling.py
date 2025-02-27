@@ -53,28 +53,67 @@ def reverse_dir(input_dir: str, root: str, output_dir: str) -> Path:
         return fallback_path
 
 
-def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
+def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     """
     Scan the input directory for FASTQ files and read count tables.
     
     Args:
         input_dir: Input directory to scan
+        experiment_name: Optional experiment name to look for in a specific subdirectory
         
     Returns:
         Dictionary with input files organized by type
     """
     input_path = Path(input_dir)
     
+    # If experiment_name is provided, focus on that subdirectory
+    if experiment_name:
+        experiment_path = input_path / experiment_name
+        if experiment_path.exists():
+            input_path = experiment_path
+            logging.info(f"Using experiment-specific directory: {input_path}")
+        else:
+            logging.warning(f"Experiment directory {experiment_path} not found. Using {input_path} instead.")
+    
     # Dictionary to store input files
     input_files = {
         'fastq_dirs': {},  # Format: {dir_path: {'contrast_table': path, 'design_matrix': path, 'fastq_files': [paths]}}
-        'read_counts': {}  # Format: {file_path: {'contrast_table': path, 'design_matrix': path}}
+        'read_counts': {},  # Format: {file_path: {'contrast_table': path, 'design_matrix': path}}
+        'library_file': None,
+        'contrast_file': None,
+        'design_matrix': None
     }
     
     # Define patterns for recognizing design matrix files
     DESIGN_MATRIX_PATTERN = "*design*.txt"
+    LIBRARY_PATTERNS = ["*library*.csv", "*library*.txt", "*guide*.csv", "*guide*.txt"]
     
     fastq_dirs = {}  # Track FASTQ directories we've already processed
+    
+    # First look for library, contrast, and design matrix files at the experiment level
+    for pattern in LIBRARY_PATTERNS:
+        library_files = list(input_path.glob(pattern))
+        if library_files:
+            input_files['library_file'] = str(library_files[0])
+            logging.info(f"Found library file: {input_files['library_file']}")
+            break
+    
+    contrast_files = list(input_path.glob(CONTRAST_TABLE_PATTERN))
+    if contrast_files:
+        input_files['contrast_file'] = str(contrast_files[0])
+        logging.info(f"Found contrast file: {input_files['contrast_file']}")
+    
+    design_files = list(input_path.glob(DESIGN_MATRIX_PATTERN))
+    if design_files:
+        input_files['design_matrix'] = str(design_files[0])
+        logging.info(f"Found design matrix: {input_files['design_matrix']}")
+        
+    # Look for data directory at the experiment level
+    data_dir = input_path / "data"
+    if data_dir.exists() and data_dir.is_dir():
+        logging.info(f"Found data directory: {data_dir}")
+        # Use this as our primary data search location
+        input_path = data_dir
     
     # Walk through the input directory
     for root, dirs, files in os.walk(input_path):
@@ -86,18 +125,14 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
         
         # Find the contrast table (if any) in this directory
         cnttbl_files = [f for f in files if fnmatch_lower(f, CONTRAST_TABLE_PATTERN)]
-        cnttbl_path = str(root_path / cnttbl_files[0]) if cnttbl_files else None
+        cnttbl_path = str(root_path / cnttbl_files[0]) if cnttbl_files else input_files.get('contrast_file')
         
         # Find the design matrix (if any) in this directory
         design_files = [f for f in files if fnmatch_lower(f, DESIGN_MATRIX_PATTERN)]
-        design_path = str(root_path / design_files[0]) if design_files else None
-        
-        # Log if both files are found
-        if cnttbl_path and design_path:
-            logging.info(f"Found both contrast table and design matrix in {root}")
+        design_path = str(root_path / design_files[0]) if design_files else input_files.get('design_matrix')
         
         # Check if this is a read count directory
-        if "read_count" in root.lower():
+        if "read_count" in root.lower() or any(f.lower().endswith('.count') for f in files):
             # Find read count files (RC files)
             rc_files = [f for f in files if fnmatch_lower(f, READ_COUNT_PATTERN)]
             
@@ -119,7 +154,7 @@ def find_input_files(input_dir: str) -> Dict[str, Dict[str, Any]]:
             for pattern in FASTQ_PATTERNS:
                 fastq_files.extend([str(root_path / f) for f in files if fnmatch_lower(f, pattern)])
             
-            if fastq_files and cnttbl_path:
+            if fastq_files:
                 fastq_dirs[root] = True  # Mark this directory as processed
                 input_files['fastq_dirs'][root] = {
                     'contrast_table': cnttbl_path,

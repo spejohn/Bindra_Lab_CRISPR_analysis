@@ -125,7 +125,8 @@ def generate_sample_sheet(
     fastq_dir: str,
     output_dir: str,
     contrast_name: str = "contrast",
-    include_patterns: Optional[List[str]] = None
+    include_patterns: Optional[List[str]] = None,
+    experiment_name: Optional[str] = None
 ) -> Optional[pd.DataFrame]:
     """
     Generate a sample sheet based on FASTQ files in the input directory.
@@ -135,12 +136,34 @@ def generate_sample_sheet(
         output_dir: Directory to save the sample sheet
         contrast_name: Name prefix for the sample sheet file
         include_patterns: File patterns to include (defaults to FASTQ_PATTERNS from config)
+        experiment_name: Name of the experiment to look for in a subdirectory
         
     Returns:
         DataFrame containing the sample sheet or None if no files found
     """
     if include_patterns is None:
         include_patterns = FASTQ_PATTERNS
+    
+    # If experiment_name is provided, check in experiment subdirectory
+    if experiment_name:
+        experiment_path = Path(fastq_dir) / experiment_name
+        if experiment_path.exists():
+            logging.info(f"Looking for FASTQ files in experiment directory: {experiment_path}")
+            
+            # Check for a data directory within the experiment directory
+            data_dir = experiment_path / "data"
+            if data_dir.exists() and data_dir.is_dir():
+                logging.info(f"Found data directory: {data_dir}")
+                fastq_dir = str(data_dir)
+            else:
+                # Also check for a fastq directory
+                fastq_subdir = experiment_path / "fastq"
+                if fastq_subdir.exists() and fastq_subdir.is_dir():
+                    logging.info(f"Found fastq directory: {fastq_subdir}")
+                    fastq_dir = str(fastq_subdir)
+                else:
+                    # Use the experiment directory directly
+                    fastq_dir = str(experiment_path)
     
     logging.info(f"Generating sample sheet from FASTQ files in {fastq_dir}")
     logging.info(f"Using file patterns: {include_patterns}")
@@ -168,6 +191,7 @@ def generate_sample_sheet(
         for suffix in [".fastq", ".fq"]:
             if sample_name.lower().endswith(suffix):
                 sample_name = sample_name[:-len(suffix)]
+        
         # Remove .gz if present
         if sample_name.lower().endswith(".gz"):
             sample_name = sample_name[:-3]
@@ -205,53 +229,92 @@ def process_all_samples(
     output_dir: str,
     sample_sheet: Optional[pd.DataFrame] = None,
     count_options: Optional[Dict[str, Any]] = None,
-    overwrite: bool = False
+    overwrite: bool = False,
+    experiment_name: Optional[str] = None
 ) -> Dict[str, str]:
     """
-    Process all samples in a directory or specified in a sample sheet.
+    Process all FASTQ samples in a directory to count files.
     
     Args:
         fastq_dir: Directory containing FASTQ files
         library_file: Path to the library file
         output_dir: Directory for output files
-        sample_sheet: Optional DataFrame containing sample information
-        count_options: Additional options for MAGeCK count
+        sample_sheet: DataFrame containing sample information (will be generated if None)
+        count_options: Options for the count function
         overwrite: Whether to overwrite existing count files
+        experiment_name: Name of the experiment to look for in a subdirectory
         
     Returns:
         Dictionary mapping sample names to count file paths
     """
-    logging.info(f"Processing all samples from {fastq_dir}")
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Ensure the output directory exists
-    ensure_output_dir(output_dir)
-    
-    # Generate sample sheet if not provided
+    # If sample_sheet is not provided, generate one
     if sample_sheet is None:
-        sample_sheet = generate_sample_sheet(fastq_dir, output_dir)
+        # Generate sample sheet for all FASTQ files
+        experiment_base = os.path.basename(output_dir)
+        sample_sheet = generate_sample_sheet(fastq_dir, output_dir, experiment_base, experiment_name=experiment_name)
+        
         if sample_sheet is None:
-            logging.error("No samples found, cannot process")
+            logging.error(f"No FASTQ files found in {fastq_dir}")
             return {}
     
-    # Process each sample
+    # Check if fastq_dir exists
+    if not os.path.exists(fastq_dir):
+        logging.error(f"FASTQ directory {fastq_dir} does not exist")
+        return {}
+    
+    # Adjust fastq_dir if experiment_name is provided
+    if experiment_name:
+        # First, check if the experiment directory exists
+        experiment_path = Path(fastq_dir) / experiment_name
+        if experiment_path.exists():
+            # Check for data directory
+            data_dir = experiment_path / "data"
+            if data_dir.exists() and data_dir.is_dir():
+                fastq_dir = str(data_dir)
+            else:
+                # Check for fastq directory
+                fastq_subdir = experiment_path / "fastq"
+                if fastq_subdir.exists() and fastq_subdir.is_dir():
+                    fastq_dir = str(fastq_subdir)
+                else:
+                    # Use experiment directory as is
+                    fastq_dir = str(experiment_path)
+                    
+            logging.info(f"Using experiment-specific directory for FASTQ files: {fastq_dir}")
+        else:
+            logging.warning(f"Experiment directory {experiment_path} not found")
+    
+    # Count files dict to return
     count_files = {}
-    for _, row in sample_sheet.iterrows():
+    
+    # Process each sample
+    for i, row in sample_sheet.iterrows():
         sample_name = row["sample"]
-        fastq_path = row["fastq_path"]
+        if "fastq_path" not in row:
+            logging.warning(f"Missing fastq_path for sample {sample_name}, skipping")
+            continue
+            
+        fastq_path = os.path.join(fastq_dir, row["fastq_path"])
+        count_file = os.path.join(output_dir, f"{sample_name}.count")
         
-        # Check if fastq_path is absolute or relative
-        if not os.path.isabs(fastq_path):
-            fastq_path = os.path.join(fastq_dir, fastq_path)
+        logging.info(f"Processing sample {sample_name} ({i+1}/{len(sample_sheet)})")
         
-        # Check if output file already exists
-        output_file = os.path.join(output_dir, f"{sample_name}.count.txt")
-        if os.path.exists(output_file) and not overwrite:
-            logging.info(f"Skipping sample {sample_name}, count file already exists")
-            count_files[sample_name] = output_file
+        # Check if count file already exists and whether to overwrite
+        if os.path.exists(count_file) and not overwrite:
+            logging.info(f"Count file {count_file} already exists, skipping (use --overwrite to force recount)")
+            count_files[sample_name] = count_file
             continue
         
-        # Process sample
-        success, result = mageck_count_single_sample(
+        # Check if FASTQ file exists
+        if not os.path.exists(fastq_path):
+            logging.error(f"FASTQ file {fastq_path} does not exist")
+            continue
+        
+        # Count FASTQ file
+        success, result_file = mageck_count_single_sample(
             fastq_file=fastq_path,
             library_file=library_file,
             output_dir=output_dir,
@@ -260,11 +323,13 @@ def process_all_samples(
         )
         
         if success:
-            count_files[sample_name] = result
+            count_files[sample_name] = result_file
+            logging.info(f"Counted {sample_name} -> {result_file}")
         else:
-            logging.error(f"Failed to process sample {sample_name}: {result}")
+            logging.error(f"Failed to count {sample_name}")
     
-    logging.info(f"Processed {len(count_files)} samples successfully")
+    logging.info(f"Processed {len(count_files)}/{len(sample_sheet)} samples")
+    
     return count_files
 
 

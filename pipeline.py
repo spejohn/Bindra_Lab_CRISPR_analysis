@@ -129,7 +129,7 @@ def process_experiment_by_type(
     # Generate sample sheet for the experiment
     if sample_sheet is None:
         sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
-        generate_sample_sheet(input_dir, base_exp_dir, experiment_name)
+        generate_sample_sheet(input_dir, base_exp_dir, experiment_name, experiment_name=experiment_name)
         results["sample_sheet"] = sample_sheet_path
     else:
         # Copy the user-provided sample sheet to the experiment directory
@@ -145,7 +145,7 @@ def process_experiment_by_type(
         fastq_dirs = glob.glob(os.path.join(input_dir, '**/fastq'), recursive=True)
         logging.info(f"Processing {len(fastq_dirs)} FASTQ directories")
         
-        count_files = process_all_samples(input_dir, library_file, base_exp_dir, sample_sheet=pd.read_csv(sample_sheet_path), overwrite=overwrite)
+        count_files = process_all_samples(input_dir, library_file, base_exp_dir, sample_sheet=pd.read_csv(sample_sheet_path), overwrite=overwrite, experiment_name=experiment_name)
         
         # Merge count files into a single table
         count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
@@ -257,7 +257,7 @@ def process_experiment_by_type(
 def run_pipeline(
     input_dir: str,
     output_dir: str,
-    library_file: str,
+    library_file: Optional[str] = None,
     experiment_name: str = "experiment",
     contrasts_file: Optional[str] = None,
     norm_method: str = DEFAULT_NORM_METHOD,
@@ -274,11 +274,11 @@ def run_pipeline(
     Run the entire analysis pipeline on a directory of fastq files or count tables.
     
     Args:
-        input_dir: Directory containing FASTQ files or count tables
+        input_dir: Directory containing experiment directories
         output_dir: Directory for output files
-        library_file: Path to the library file
-        experiment_name: Name for the experiment
-        contrasts_file: Path to the contrasts file (for differential analysis)
+        library_file: Path to the library file (if not provided, will look in experiment directory)
+        experiment_name: Name of the experiment (corresponds to subdirectory in input_dir)
+        contrasts_file: Path to the contrasts file (if not provided, will look in experiment directory)
         norm_method: Normalization method for MAGeCK
         fdr_threshold: FDR threshold for significant genes
         sample_sheet: Sample sheet for mapping sample names to conditions
@@ -299,6 +299,26 @@ def run_pipeline(
         if not docker_available:
             logging.warning("Docker is not available or required images are missing. Falling back to local installations.")
             use_docker = False
+    
+    # Look for input files using experiment_name as subdirectory
+    from analysis_pipeline.core.file_handling import find_input_files
+    input_files = find_input_files(input_dir, experiment_name)
+    
+    # If library_file is not provided, check if one was found in the experiment directory
+    if library_file is None and input_files.get('library_file'):
+        library_file = input_files['library_file']
+        logging.info(f"Using library file from experiment directory: {library_file}")
+    elif library_file is None:
+        # Use default library location
+        library_file = os.path.join(input_dir, "library.csv")
+        
+    # If contrasts_file is not provided, check if one was found in the experiment directory
+    if contrasts_file is None and input_files.get('contrast_file'):
+        contrasts_file = input_files['contrast_file']
+        logging.info(f"Using contrast file from experiment directory: {contrasts_file}")
+    elif contrasts_file is None:
+        # Use default contrasts location
+        contrasts_file = os.path.join(input_dir, "contrasts.csv")
     
     # Read contrasts file to get contrast names
     contrasts = []
@@ -323,12 +343,44 @@ def run_pipeline(
         "count_files": {}
     }
     
-    # Check for both FASTQ and count files
-    fastq_dirs = glob.glob(os.path.join(input_dir, '**/fastq'), recursive=True)
-    count_files = glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True)
+    # Determine input data types - look directly in experiment subdirectory or data dir
+    # Check in experiment directory first
+    fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fastq*")
+    fastq_files = glob.glob(fastq_pattern, recursive=True)
     
-    has_fastq = len(fastq_dirs) > 0
+    # If no fastq files found in experiment dir, check in data dir
+    if not fastq_files:
+        fastq_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.fastq*")
+        fastq_files = glob.glob(fastq_pattern, recursive=True)
+    
+    # Also look for fastq in fastq subdirectory
+    if not fastq_files:
+        fastq_pattern = os.path.join(input_dir, experiment_name, "fastq", "**", "*.fastq*")
+        fastq_files = glob.glob(fastq_pattern, recursive=True)
+        
+    # Also try fq extension
+    if not fastq_files:
+        fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fq*")
+        fastq_files = glob.glob(fastq_pattern, recursive=True)
+        
+    # Check count files
+    count_pattern = os.path.join(input_dir, experiment_name, "**", "*.count")
+    count_files = glob.glob(count_pattern, recursive=True)
+    
+    # If no count files found, check in data dir
+    if not count_files:
+        count_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.count")
+        count_files = glob.glob(count_pattern, recursive=True)
+    
+    # Also look for count files in counts subdirectory
+    if not count_files:
+        count_pattern = os.path.join(input_dir, experiment_name, "counts", "**", "*.count")
+        count_files = glob.glob(count_pattern, recursive=True)
+        
+    has_fastq = len(fastq_files) > 0
     has_count_files = len(count_files) > 0
+    
+    logging.info(f"Found {len(fastq_files)} FASTQ files and {len(count_files)} count files")
     
     # If both types exist, create separate experiment directories
     if has_fastq and has_count_files:
@@ -401,7 +453,7 @@ def run_pipeline(
         # Generate sample sheet for the experiment
         if sample_sheet is None:
             sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
-            generate_sample_sheet(input_dir, base_exp_dir, experiment_name)
+            generate_sample_sheet(input_dir, base_exp_dir, experiment_name, experiment_name=experiment_name)
             results["sample_sheet"] = sample_sheet_path
         else:
             # Copy the user-provided sample sheet to the experiment directory
@@ -413,9 +465,16 @@ def run_pipeline(
         count_table = None
         
         if has_fastq:
-            logging.info(f"Found {len(fastq_dirs)} fastq directories")
+            logging.info(f"Found {len(fastq_files)} fastq files")
             # Process all samples
-            count_files = process_all_samples(input_dir, library_file, base_exp_dir, sample_sheet=pd.read_csv(sample_sheet_path), overwrite=overwrite)
+            count_files = process_all_samples(
+                input_dir, 
+                library_file, 
+                base_exp_dir, 
+                sample_sheet=pd.read_csv(sample_sheet_path), 
+                overwrite=overwrite,
+                experiment_name=experiment_name
+            )
             
             # Merge count files into a single table - save directly in the experiment directory
             count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
@@ -438,8 +497,8 @@ def run_pipeline(
                 results["count_table"] = count_table
                 logging.info(f"Using existing count table: {count_table}")
             else:
-                logging.error("No fastq directories or count tables found")
-                return {"error": "No fastq directories or count tables found"}
+                logging.error("No fastq files or count tables found")
+                return {"error": "No fastq files or count tables found"}
         
         # Run analysis for each contrast
         if contrasts and count_table:
@@ -529,44 +588,68 @@ def run_pipeline(
 
 def main():
     """Command-line entry point for the CRISPR screening analysis pipeline."""
-    parser = argparse.ArgumentParser(description="CRISPR Screening Analysis Pipeline")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="CRISPR screening analysis pipeline")
     
-    # Required argument - just the input directory
-    parser.add_argument("input_dir", help="Directory containing CRISPR screen data (FASTQ or count tables)")
+    # Input/output options
+    parser.add_argument("--input-dir", "-i", required=True, help="Directory containing input files or experiment directories")
+    parser.add_argument("--output-dir", "-o", required=True, help="Directory for output files")
+    parser.add_argument("--experiment-name", "-e", default="experiment", 
+                        help="Name of the experiment; corresponds to a subdirectory in input-dir")
+    parser.add_argument("--library-file", "-l", help="Path to library file (defaults to <input-dir>/<experiment-name>/library.csv)")
+    parser.add_argument("--contrasts-file", "-c", help="Path to contrasts file (defaults to <input-dir>/<experiment-name>/contrasts.csv)")
+    parser.add_argument("--sample-sheet", "-s", help="Path to sample sheet (will be generated if not provided)")
     
-    # Optional arguments
-    parser.add_argument("-o", "--output-dir", help="Directory for output files (defaults to input_dir/results)")
-    parser.add_argument("-l", "--library-file", help="Path to the library file (defaults to input_dir/library.csv)")
-    parser.add_argument("-e", "--experiment-name", default="experiment", help="Name of the experiment")
-    parser.add_argument("-c", "--contrasts-file", help="Path to the contrasts file (defaults to input_dir/contrasts.csv)")
-    parser.add_argument("--norm-method", default=DEFAULT_NORM_METHOD, help="Normalization method")
-    parser.add_argument("--fdr-threshold", type=float, default=DEFAULT_FDR_THRESHOLD, help="FDR threshold for significance")
-    parser.add_argument("-s", "--sample-sheet", help="Path to the sample sheet (will be auto-generated if not provided)")
+    # Analysis options
+    parser.add_argument("--norm-method", default=DEFAULT_NORM_METHOD, 
+                        choices=["median", "total", "control"], 
+                        help="Normalization method for MAGeCK")
+    parser.add_argument("--fdr-threshold", type=float, default=DEFAULT_FDR_THRESHOLD, 
+                        help="FDR threshold for significant genes")
+    
+    # Flags
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
-    parser.add_argument("--skip-qc", action="store_true", help="Skip quality control plotting")
+    parser.add_argument("--skip-qc", action="store_true", help="Skip quality control checks")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers for analysis tools when available")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
+    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers when available")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
     
-    # Set default paths if not provided
+    # Create absolute paths
     input_dir = os.path.abspath(args.input_dir)
-    output_dir = args.output_dir or os.path.join(input_dir, "results")
-    library_file = args.library_file or os.path.join(input_dir, "library.csv")
-    contrasts_file = args.contrasts_file or os.path.join(input_dir, "contrasts.csv")
+    output_dir = os.path.abspath(args.output_dir)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Default library and contrasts files within the experiment directory
+    library_file = args.library_file or os.path.join(input_dir, args.experiment_name, "library.csv")
+    contrasts_file = args.contrasts_file or os.path.join(input_dir, args.experiment_name, "contrasts.csv")
     
     # Check if required files exist
     if not os.path.exists(library_file):
-        print(f"Error: Library file not found at {library_file}")
-        print("Please provide a valid library file path with --library-file")
-        return 1
+        # Also check legacy location
+        legacy_library = os.path.join(input_dir, "library.csv")
+        if os.path.exists(legacy_library):
+            library_file = legacy_library
+            print(f"Using legacy library file: {library_file}")
+        else:
+            print(f"Error: Library file not found at {library_file} or {legacy_library}")
+            print("Please provide a valid library file path with --library-file")
+            return 1
     
     if args.contrasts_file is None and not os.path.exists(contrasts_file):
-        print(f"Warning: No contrasts file found at {contrasts_file}")
-        print("Differential analysis will be skipped.")
-        contrasts_file = None
+        # Also check legacy location
+        legacy_contrasts = os.path.join(input_dir, "contrasts.csv")
+        if os.path.exists(legacy_contrasts):
+            contrasts_file = legacy_contrasts
+            print(f"Using legacy contrasts file: {contrasts_file}")
+        else:
+            print(f"Warning: No contrasts file found at {contrasts_file} or {legacy_contrasts}")
+            print("Differential analysis will be skipped.")
+            contrasts_file = None
     
     # Set logging level
     log_level = logging.DEBUG if args.verbose else logging.INFO

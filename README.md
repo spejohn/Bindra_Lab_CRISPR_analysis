@@ -100,9 +100,64 @@ When processing both FASTQ and count files, separate experiment directories are 
 
 ## Input Directory Structure
 
-The pipeline expects input data in one of the following formats:
+The pipeline now supports a more organized input structure with experiment-specific subdirectories:
 
-### Option 1: Raw FASTQ files
+```
+<input_dir>/
+├── <experiment_name1>/           # First experiment directory
+│   ├── library.csv               # CRISPR library file for this experiment
+│   ├── contrasts.csv             # Contrast definitions file for this experiment
+│   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
+│   │
+│   └── data/                     # Data directory containing FASTQ and/or count files
+│       ├── sample1_R1.fastq.gz   # FASTQ files should follow standard naming
+│       ├── sample2_R1.fastq.gz
+│       └── ...
+│
+├── <experiment_name2>/           # Second experiment directory
+│   ├── library.csv               # CRISPR library file for this experiment
+│   ├── contrasts.csv             # Contrast definitions file for this experiment
+│   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
+│   │
+│   └── data/                     # Data directory containing FASTQ and/or count files
+│       ├── other_sample1.count   # Count files for this experiment
+│       ├── other_sample2.count
+│       └── ...
+```
+
+Alternatively, data can be organized with separate fastq and counts directories:
+
+```
+<input_dir>/
+├── <experiment_name1>/           # First experiment directory
+│   ├── library.csv               # CRISPR library file for this experiment
+│   ├── contrasts.csv             # Contrast definitions file for this experiment
+│   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
+│   │
+│   ├── fastq/                    # Directory containing FASTQ files
+│   │   ├── sample1_R1.fastq.gz
+│   │   └── ...
+│   │
+│   └── counts/                   # Directory containing count files
+│       ├── other_sample1.count
+│       └── ...
+```
+
+When running the pipeline, the `experiment_name` parameter specifies which subdirectory to use for analysis:
+
+```bash
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --experiment-name experiment1
+```
+
+This will:
+1. Look for files in `/path/to/input/experiment1/`
+2. Create output in `/path/to/output/experiment1/`
+
+### Legacy Input Structures
+
+The pipeline still supports the following legacy input structures for backward compatibility:
+
+#### Option 1: Raw FASTQ files
 
 ```
 <input_dir>/
@@ -115,7 +170,7 @@ The pipeline expects input data in one of the following formats:
 │   └── ...
 ```
 
-### Option 2: Pre-processed count files
+#### Option 2: Pre-processed count files
 
 ```
 <input_dir>/
@@ -128,9 +183,7 @@ The pipeline expects input data in one of the following formats:
 │   └── ...
 ```
 
-### Option 3: Mixed input (both FASTQ and count files)
-
-If your input directory contains both FASTQ files and pre-processed count files, the pipeline will automatically create separate experiment directories with appropriate suffixes:
+#### Option 3: Mixed input (both FASTQ and count files)
 
 ```
 <input_dir>/
@@ -144,12 +197,6 @@ If your input directory contains both FASTQ files and pre-processed count files,
 │   ├── other_sample1.count
 │   └── ...
 ```
-
-In this case, the pipeline will create:
-- `<experiment_name>_FASTQ/` for results from FASTQ analysis
-- `<experiment_name>_RC/` for results from read count analysis
-
-This ensures that both analyses run independently without overwriting each other's results.
 
 ### Required Input Files
 
