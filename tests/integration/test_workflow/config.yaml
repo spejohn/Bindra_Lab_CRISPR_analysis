@@ -1,0 +1,21 @@
+# Test Configuration for CRISPR Analysis Pipeline - Integration Testing
+# This is a simplified config for integration test workflows
+
+# Input/Output Settings
+input_dir: "input"                # Directory containing test data
+output_dir: "results"             # Directory for test results
+experiment_name: "test_experiment" # Test experiment prefix
+
+# Analysis Settings
+norm_method: "median"      # Normalization method for MAGeCK
+fdr_threshold: 0.05        # FDR threshold for significant hits
+use_docker: false          # Default to no Docker for tests
+
+# Resource Settings (keep minimal for tests)
+threads: 1                 # Use minimal threads for tests
+memory_gb: 2               # Use minimal memory for tests
+
+# Test-specific settings
+is_test: true              # Flag to indicate this is a test run
+skip_long_steps: true      # Skip time-consuming steps in test mode
+verify_outputs: true       # Verify output file integrity 

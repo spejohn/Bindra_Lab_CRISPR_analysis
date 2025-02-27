@@ -1,0 +1,285 @@
+# fmt: off
+"""
+# Test Snakefile for CRISPR Analysis Pipeline - Integration Testing
+# This file defines a simplified workflow for integration testing purposes
+"""
+
+import os
+import glob
+import pandas as pd
+import sys
+from pathlib import Path
+
+
+# Configuration - use test-specific config
+configfile: "config.yaml"
+
+
+# Default configuration values
+config.setdefault("input_dir", "input")
+config.setdefault("output_dir", "results")
+config.setdefault("experiment_name", "test_experiment")
+config.setdefault("norm_method", "median")
+config.setdefault("fdr_threshold", 0.05)
+config.setdefault("use_docker", False)  # Default to no Docker for tests
+
+
+# Locate test data
+def find_fastq_files():
+    """Find all FASTQ files in the input directory"""
+    fastq_files = []
+    for ext in [".fastq", ".fq", ".fastq.gz", ".fq.gz"]:
+        fastq_files.extend(
+            glob.glob(os.path.join(config["input_dir"], "**", f"*{ext}"), recursive=True)
+        )
+    return fastq_files
+
+
+def find_library_file():
+    """Find library file in input directory"""
+    patterns = [
+        "*library*.csv",
+        "*library*.txt",
+        "*guide*.csv",
+        "*guide*.txt",
+        "*sgRNA*.csv",
+        "*sgRNA*.txt",
+    ]
+
+    for pattern in patterns:
+        matches = glob.glob(os.path.join(config["input_dir"], pattern))
+        if matches:
+            return matches[0]
+    # If no library file is found, print a clear error message
+    sys.stderr.write(
+        "ERROR: No library file found in input directory. "
+        + "Please provide a library file with one of these patterns: "
+        + ", ".join(patterns)
+        + "\n"
+    )
+    return None
+
+
+# Find input files
+FASTQ_FILES = find_fastq_files()
+LIBRARY_FILE = find_library_file()
+
+# Check if library file exists
+if not LIBRARY_FILE:
+    raise ValueError(
+        "Library file not found in input directory. Analysis cannot proceed without a library file."
+    )
+
+# Check FASTQ files
+for fastq_file in FASTQ_FILES:
+    # Check if file is empty
+    if os.path.getsize(fastq_file) == 0:
+        sys.stderr.write(f"WARNING: Empty FASTQ file detected: {fastq_file}\n")
+
+    # Validate FASTQ format (basic check)
+    try:
+        with open(fastq_file, "r") as f:
+            first_line = f.readline().strip()
+            if not first_line.startswith("@"):
+                sys.stderr.write(
+                    f"ERROR: Invalid FASTQ format in file: {fastq_file}. "
+                    + "FASTQ files must start with '@' character.\n"
+                )
+    except Exception as e:
+        sys.stderr.write(f"ERROR: Failed to read FASTQ file {fastq_file}: {str(e)}\n")
+
+SAMPLE_NAMES = [os.path.basename(f).split(".")[0] for f in FASTQ_FILES]
+
+# Make sure required directories exist
+os.makedirs(config["output_dir"], exist_ok=True)
+os.makedirs(os.path.join(config["output_dir"], "counts"), exist_ok=True)
+os.makedirs(os.path.join(config["output_dir"], "merged"), exist_ok=True)
+os.makedirs(os.path.join(config["output_dir"], "analysis", "mageck_test"), exist_ok=True)
+os.makedirs(os.path.join(config["output_dir"], "qc"), exist_ok=True)
+
+
+# Final output files
+rule all:
+    input:
+        # Count files for each sample
+        expand(
+            os.path.join(config["output_dir"], "counts", "{sample}.count.txt"),
+            sample=SAMPLE_NAMES,
+        ),
+        # Merged count table
+        os.path.join(config["output_dir"], "merged", "count_table.txt"),
+        # MAGeCK analysis results (if multiple samples)
+        os.path.join(
+            config["output_dir"],
+            "analysis",
+            "mageck_test",
+            "test_contrast.gene_summary.txt",
+        )
+        if len(SAMPLE_NAMES) > 1
+        else [],
+        # QC report
+        os.path.join(config["output_dir"], "qc", "qc_report.html"),
+
+
+# Step 1: Count sgRNAs in each sample
+rule count_sample:
+    input:
+        fastq=lambda wildcards: [f for f in FASTQ_FILES if wildcards.sample in f][0],
+        library=LIBRARY_FILE,
+    output:
+        count_file=os.path.join(config["output_dir"], "counts", "{sample}.count.txt"),
+    run:
+        # Check if input files exist and are readable
+        for input_file in [input.fastq, input.library]:
+            if not os.path.exists(input_file):
+                raise FileNotFoundError(f"Input file not found: {input_file}")
+            if not os.access(input_file, os.R_OK):
+                raise PermissionError(f"No read permission for file: {input_file}")
+
+                # Check for empty input files
+        if os.path.getsize(input.fastq) == 0:
+            print(f"WARNING: Input FASTQ file is empty: {input.fastq}")
+            # Still create a valid but empty count file
+            with open(output.count_file, "w") as f:
+                f.write("sgRNA\tGene\tCount\n")
+            return
+
+            # Create directory if it doesn't exist
+        output_dir = os.path.dirname(output.count_file)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except PermissionError:
+            raise PermissionError(f"No write permission for directory: {output_dir}")
+
+            # Validate FASTQ format
+        try:
+            with open(input.fastq, "r") as f:
+                first_line = f.readline().strip()
+                if not first_line.startswith("@"):
+                    raise ValueError(f"Invalid FASTQ format in file: {input.fastq}")
+        except Exception as e:
+            raise ValueError(f"Error reading FASTQ file {input.fastq}: {str(e)}")
+
+            # Write output file using Python
+        try:
+            with open(output.count_file, "w") as f:
+                f.write("sgRNA\tGene\tCount\n")
+                f.write("sgRNA1\tGeneA\t100\n")
+                f.write("sgRNA2\tGeneB\t200\n")
+        except PermissionError:
+            raise PermissionError(f"No write permission for file: {output.count_file}")
+
+
+# Step 2: Merge count files
+rule merge_counts:
+    input:
+        count_files=expand(
+            os.path.join(config["output_dir"], "counts", "{sample}.count.txt"),
+            sample=SAMPLE_NAMES,
+        ),
+    output:
+        merged_file=os.path.join(config["output_dir"], "merged", "count_table.txt"),
+    run:
+        # Create directory if it doesn't exist
+        output_dir = os.path.dirname(output.merged_file)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except PermissionError:
+            raise PermissionError(f"No write permission for directory: {output_dir}")
+
+            # Write output file using Python
+        try:
+            with open(output.merged_file, "w") as f:
+                f.write(f"sgRNA\tGene\t{'\t'.join(SAMPLE_NAMES)}\n")
+                f.write(f"sgRNA1\tGeneA\t100\t150\n")
+                f.write(f"sgRNA2\tGeneB\t200\t250\n")
+        except PermissionError:
+            raise PermissionError(f"No write permission for file: {output.merged_file}")
+
+
+# Step 3: Run MAGeCK Test (only if we have at least 2 samples)
+rule mageck_test:
+    input:
+        count_table=os.path.join(config["output_dir"], "merged", "count_table.txt"),
+    output:
+        gene_summary=os.path.join(
+            config["output_dir"],
+            "analysis",
+            "mageck_test",
+            "test_contrast.gene_summary.txt",
+        ),
+        sgrna_summary=os.path.join(
+            config["output_dir"],
+            "analysis",
+            "mageck_test",
+            "test_contrast.sgrna_summary.txt",
+        ),
+    params:
+        norm_method=config["norm_method"],
+        output_prefix=os.path.join(config["output_dir"], "analysis", "mageck_test", "test_contrast"),
+    run:
+        # Create directory if it doesn't exist
+        output_dir = os.path.dirname(output.gene_summary)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except PermissionError:
+            raise PermissionError(f"No write permission for directory: {output_dir}")
+
+            # Create mock gene summary
+        try:
+            with open(output.gene_summary, "w") as f:
+                f.write("Gene\tsgRNA\tp-value\tFDR\tLFC\n")
+                f.write("GeneA\tsgRNA1\t0.01\t0.05\t1.5\n")
+                f.write("GeneB\tsgRNA2\t0.02\t0.06\t-1.2\n")
+        except PermissionError:
+            raise PermissionError(f"No write permission for file: {output.gene_summary}")
+
+            # Create mock sgRNA summary
+        try:
+            with open(output.sgrna_summary, "w") as f:
+                f.write("sgRNA\tGene\tp-value\tLFC\n")
+                f.write("sgRNA1\tGeneA\t0.01\t1.5\n")
+                f.write("sgRNA2\tGeneB\t0.02\t-1.2\n")
+        except PermissionError:
+            raise PermissionError(f"No write permission for file: {output.sgrna_summary}")
+
+
+# Step 4: Generate QC report
+rule generate_qc:
+    input:
+        count_files=expand(
+            os.path.join(config["output_dir"], "counts", "{sample}.count.txt"),
+            sample=SAMPLE_NAMES,
+        ),
+        merged_file=os.path.join(config["output_dir"], "merged", "count_table.txt"),
+    output:
+        qc_report=os.path.join(config["output_dir"], "qc", "qc_report.html"),
+    run:
+        # Create directory if it doesn't exist
+        output_dir = os.path.dirname(output.qc_report)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except PermissionError:
+            raise PermissionError(f"No write permission for directory: {output_dir}")
+
+            # Write HTML report directly using Python
+        try:
+            with open(output.qc_report, "w") as f:
+                f.write(
+                    """<!DOCTYPE html>
+<html>
+<head>
+    <title>CRISPR Analysis QC Report</title>
+</head>
+<body>
+    <h1>CRISPR Analysis QC Report</h1>
+    <p>This is a mock QC report for integration testing.</p>
+    <h2>Samples</h2>
+    <ul>
+        <li>Sample list would be here</li>
+    </ul>
+</body>
+</html>"""
+                )
+        except PermissionError:
+            raise PermissionError(f"No write permission for file: {output.qc_report}")
