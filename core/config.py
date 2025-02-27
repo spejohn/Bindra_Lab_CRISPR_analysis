@@ -26,6 +26,7 @@ DESIGN_MATRIX_PATTERN = "*design*.txt"  # New pattern for design matrix files
 LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "gene"]
 CONTRAST_REQUIRED_COLUMNS = ["contrast", "treatment", "control"]
 SAMPLE_SHEET_COLUMNS = ["sample_name", "fastq_path"]
+SAMPLE_SHEET_REQUIRED_COLUMNS = ["sample", "fastq_file", "condition"]  # Adding this for test compatibility
 
 # Sample naming patterns
 SAMPLE_NAMING_PATTERNS = {
