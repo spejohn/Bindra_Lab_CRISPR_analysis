@@ -201,39 +201,29 @@ def make_count_table(rc_file: str, output_dir: Optional[str] = None) -> str:
         raise
 
 
-def create_experiment_dirs(base_dir: str, experiment_name: str) -> Dict[str, str]:
+def create_experiment_dirs(base_dir: str, contrast_name: str) -> Dict[str, str]:
     """
-    Create standard directory structure for an experiment.
+    Create standard directory structure for a contrast.
     
     Args:
-        base_dir: Base directory for the experiment
-        experiment_name: Name of the experiment
+        base_dir: Base directory for the contrast
+        contrast_name: Name of the contrast
         
     Returns:
         Dictionary with paths to created directories
     """
     base_path = Path(base_dir)
-    experiment_path = base_path / experiment_name
     
-    # Create standardized subdirectories
+    # Simplified structure - only use the contrast directory itself
+    # without creating subdirectories for each analysis type
     dirs = {
-        'experiment': str(experiment_path),
-        'logs': str(experiment_path / 'logs'),  # Keep logs at experiment level
-        'counts': str(experiment_path / 'counts'),
-        'samplesheets': str(experiment_path / 'samplesheets'),
-        'library': str(experiment_path / 'library'),
-        'rra': str(experiment_path / 'RRA'),  # Renamed from 'mageck' to 'RRA' for clarity
-        'mle': str(experiment_path / 'MLE'),  # New directory for MLE analysis
-        'drugz': str(experiment_path / 'drugz'),
-        'qc': str(experiment_path / 'qc'),
-        'figures': str(experiment_path / 'figures')
+        'contrast': str(base_path)  # The contrast directory serves as the root for all files
     }
     
-    # Create all directories
-    for dir_path in dirs.values():
-        os.makedirs(dir_path, exist_ok=True)
+    # Create the directory
+    os.makedirs(base_path, exist_ok=True)
     
-    logging.info(f"Created directory structure for experiment: {experiment_name}")
+    logging.info(f"Created directory structure for contrast: {contrast_name}")
     return dirs
 
 
@@ -293,4 +283,50 @@ def identify_analyzed_experiments(output_dir: str) -> Dict[str, Dict[str, bool]]
         if os.path.exists(qc_dir) and os.listdir(qc_dir):
             analyzed_experiments[exp_dir]["qc_plots"] = True
     
-    return analyzed_experiments 
+    return analyzed_experiments
+
+
+def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
+    """
+    Convert analysis results (RRA or DrugZ) to CSV format with appropriate suffix.
+    
+    Args:
+        result_file: Path to the result file (tab-delimited)
+        analysis_type: Type of analysis ('RRA' or 'DrugZ')
+        
+    Returns:
+        Path to the created CSV file
+    """
+    try:
+        # Determine suffix based on analysis type
+        if analysis_type.upper() == 'RRA':
+            suffix = '_gMGK'
+        elif analysis_type.upper() == 'DRUGZ':
+            suffix = '_gDZ'
+        else:
+            suffix = f'_{analysis_type}'
+        
+        # Get the base name and directory
+        result_path = Path(result_file)
+        result_dir = result_path.parent
+        
+        # Create new filename with appropriate suffix
+        # Remove old suffix if present
+        base_name = result_path.stem
+        for old_suffix in ['_RRA', '_DrugZ', '.gene_summary']:
+            if old_suffix in base_name:
+                base_name = base_name.replace(old_suffix, '')
+        
+        csv_file = os.path.join(result_dir, f"{base_name}{suffix}.csv")
+        
+        # Read the tab-delimited file and convert to CSV
+        df = pd.read_csv(result_file, sep='\t')
+        df.to_csv(csv_file, index=False)
+        
+        logging.info(f"Converted {result_file} to CSV format: {csv_file}")
+        
+        return csv_file
+    
+    except Exception as e:
+        logging.error(f"Error converting {result_file} to CSV: {str(e)}")
+        return result_file 

@@ -124,7 +124,7 @@ def mageck_count_single_sample(
 def generate_sample_sheet(
     fastq_dir: str,
     output_dir: str,
-    experiment_name: str = "experiment",
+    contrast_name: str = "contrast",
     include_patterns: Optional[List[str]] = None
 ) -> Optional[pd.DataFrame]:
     """
@@ -133,7 +133,7 @@ def generate_sample_sheet(
     Args:
         fastq_dir: Directory containing FASTQ files
         output_dir: Directory to save the sample sheet
-        experiment_name: Name prefix for the sample sheet file
+        contrast_name: Name prefix for the sample sheet file
         include_patterns: File patterns to include (defaults to FASTQ_PATTERNS from config)
         
     Returns:
@@ -189,8 +189,8 @@ def generate_sample_sheet(
         if col not in sample_sheet.columns:
             sample_sheet[col] = ""
     
-    # Save to file
-    sample_sheet_path = os.path.join(output_dir, f"{experiment_name}_sample_sheet.csv")
+    # Save to file using the contrast name in the filename
+    sample_sheet_path = os.path.join(output_dir, f"{contrast_name}_samples.txt")
     sample_sheet.to_csv(sample_sheet_path, index=False)
     
     logging.info(f"Generated sample sheet with {len(samples)} samples")
@@ -271,7 +271,7 @@ def process_all_samples(
 def merge_count_files(
     count_files: Dict[str, str],
     output_dir: str,
-    output_name: str = "merged_counts"
+    contrast_name: str = "contrast"
 ) -> Optional[str]:
     """
     Merge multiple count files into a single count table.
@@ -279,7 +279,7 @@ def merge_count_files(
     Args:
         count_files: Dictionary mapping sample names to count file paths
         output_dir: Directory to save the merged file
-        output_name: Prefix for the output file name
+        contrast_name: Name of the contrast (used for file naming)
         
     Returns:
         Path to the merged count file or None if failed
@@ -331,8 +331,8 @@ def merge_count_files(
         # Create merged DataFrame
         merged_df = pd.DataFrame(data)
         
-        # Save to file
-        output_file = os.path.join(output_dir, f"{output_name}.counts.txt")
+        # Save the merged count file directly in the experiment directory
+        output_file = os.path.join(output_dir, f"{contrast_name}.count")
         merged_df.to_csv(output_file, sep='\t', index=False)
         
         logging.info(f"Merged count file saved to {output_file}")

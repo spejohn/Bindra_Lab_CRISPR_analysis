@@ -10,21 +10,30 @@ from datetime import datetime
 from pathlib import Path
 
 
-def setup_logging(output_dir: str, experiment_name: str) -> str:
+def setup_logging(output_dir: str = None, experiment_name: str = None, log_file: str = None) -> str:
     """
     Configure logging with both file and console output.
     
     Args:
-        output_dir: Directory to save log files
-        experiment_name: Name of the experiment for log file naming
+        output_dir: Directory to save log files (optional if log_file is provided)
+        experiment_name: Name of the experiment for log file naming (optional if log_file is provided)
+        log_file: Direct path to the log file (overrides output_dir and experiment_name)
         
     Returns:
         Path to the log file
     """
-    os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime('%m-%d-%y_%H-%M')
-    log_filename = f"{experiment_name}_analysis_{timestamp}.log"
-    log_file_path = Path(output_dir) / log_filename
+    if log_file:
+        log_file_path = Path(log_file)
+        # Ensure the directory exists
+        os.makedirs(log_file_path.parent, exist_ok=True)
+    else:
+        if not output_dir or not experiment_name:
+            raise ValueError("Either log_file or both output_dir and experiment_name must be provided")
+            
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = datetime.now().strftime('%m-%d-%y_%H-%M')
+        log_filename = f"{experiment_name}_analysis_{timestamp}.log"
+        log_file_path = Path(output_dir) / log_filename
 
     logging.basicConfig(
         level=logging.INFO,

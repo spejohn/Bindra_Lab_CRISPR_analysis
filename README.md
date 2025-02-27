@@ -8,9 +8,11 @@ A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA an
 - Comprehensive quality control and visualization
 - Robust error handling and diagnostics
 - Support for both read count tables and raw FASTQ files
+- Automatic handling of dual input types (FASTQ and count files) with separate output directories
 - Flexible input formats with automatic validation and fixing
 - Conditional MAGeCK MLE analysis based on design matrix availability
-- Standardized output directory structure
+- Standardized output directory structure with flattened organization
+- Automatic CSV conversion of all analysis results for easier downstream processing
 - **NEW: Snakemake workflow management for reproducible analyses**
 - **NEW: Cross-platform compatibility (Windows, macOS, Linux)**
 - **NEW: Enhanced Docker volume handling and path resolution**
@@ -45,21 +47,142 @@ The pipeline is organized into the following modules:
 
 ## Output Directory Structure
 
-For each experiment, the pipeline creates a standardized directory structure:
+The pipeline creates a standardized directory structure with flattened organization for better clarity:
 
 ```
 <output_dir>/
-├── <experiment_name>/
-│   ├── logs/                  # Log files
-│   ├── counts/                # Count files 
-│   ├── samplesheets/          # Generated sample sheets
-│   ├── library/               # Validated library files
-│   ├── RRA/                   # MAGeCK RRA analysis results
-│   ├── MLE/                   # MAGeCK MLE analysis results (when applicable)
-│   ├── drugz/                 # DrugZ analysis results 
-│   ├── qc/                    # Quality control plots and reports
-│   └── figures/               # Publication-ready figures
+├── <experiment_name>/                      # Main experiment directory (or <experiment_name>_FASTQ/ or <experiment_name>_RC/)
+│   ├── <experiment_name>.count             # Merged count file for the entire experiment
+│   ├── <experiment_name>.log               # Log file for the entire experiment
+│   ├── <experiment_name>_samples.txt       # Sample sheet for the experiment
+│   │
+│   ├── <contrast_name1>/                   # First contrast directory
+│   │   ├── <contrast_name1>_RRA.gene_summary.txt     # MAGeCK RRA results
+│   │   ├── <contrast_name1>_gMGK.csv                 # MAGeCK RRA results in CSV format
+│   │   ├── <contrast_name1>_MLE.gene_summary.txt     # MAGeCK MLE results (when applicable)
+│   │   ├── <contrast_name1>_gMLE.csv                 # MAGeCK MLE results in CSV format
+│   │   ├── <contrast_name1>_DrugZ.txt                # DrugZ results
+│   │   └── <contrast_name1>_gDZ.csv                  # DrugZ results in CSV format
+│   │
+│   ├── <contrast_name2>/                   # Second contrast directory
+│   │   ├── <contrast_name2>_RRA.gene_summary.txt
+│   │   ├── <contrast_name2>_gMGK.csv
+│   │   └── ...
+│   │
+│   └── qc/                                 # Quality control plots and reports
 ```
+
+When processing both FASTQ and count files, separate experiment directories are created:
+
+```
+<output_dir>/
+├── <experiment_name>_FASTQ/                # Results from FASTQ file analysis
+│   ├── <experiment_name>_FASTQ.count
+│   ├── <experiment_name>_FASTQ.log
+│   ├── <experiment_name>_FASTQ_samples.txt
+│   └── ...
+│
+├── <experiment_name>_RC/                   # Results from read count file analysis
+│   ├── <experiment_name>_RC.count
+│   ├── <experiment_name>_RC.log
+│   ├── <experiment_name>_RC_samples.txt
+│   └── ...
+```
+
+### File Naming Conventions
+
+- **Log files**: `<experiment_name>.log`
+- **Sample sheets**: `<experiment_name>_samples.txt`
+- **Count files**: `<experiment_name>.count`
+- **RRA results**: `<contrast_name>_RRA.gene_summary.txt` and `<contrast_name>_gMGK.csv`
+- **MLE results**: `<contrast_name>_MLE.gene_summary.txt` and `<contrast_name>_gMLE.csv`
+- **DrugZ results**: `<contrast_name>_DrugZ.txt` and `<contrast_name>_gDZ.csv`
+
+## Input Directory Structure
+
+The pipeline expects input data in one of the following formats:
+
+### Option 1: Raw FASTQ files
+
+```
+<input_dir>/
+├── library.csv                  # CRISPR library file (required)
+├── contrasts.csv                # Contrast definitions file (required)
+├── design_matrix.txt            # Design matrix for MLE analysis (optional)
+├── fastq/                       # Directory containing FASTQ files
+│   ├── sample1_R1.fastq.gz      # FASTQ files should follow standard naming
+│   ├── sample2_R1.fastq.gz
+│   └── ...
+```
+
+### Option 2: Pre-processed count files
+
+```
+<input_dir>/
+├── library.csv                  # CRISPR library file (required)
+├── contrasts.csv                # Contrast definitions file (required)
+├── design_matrix.txt            # Design matrix for MLE analysis (optional)
+├── counts/                      # Directory containing count files
+│   ├── sample1.count            # Count files should be tab-delimited
+│   ├── sample2.count
+│   └── ...
+```
+
+### Option 3: Mixed input (both FASTQ and count files)
+
+If your input directory contains both FASTQ files and pre-processed count files, the pipeline will automatically create separate experiment directories with appropriate suffixes:
+
+```
+<input_dir>/
+├── library.csv                  # CRISPR library file (required)
+├── contrasts.csv                # Contrast definitions file (required)
+├── design_matrix.txt            # Design matrix for MLE analysis (optional)
+├── fastq/                       # Directory containing FASTQ files
+│   ├── sample1_R1.fastq.gz
+│   └── ...
+├── counts/                      # Directory containing count files
+│   ├── other_sample1.count
+│   └── ...
+```
+
+In this case, the pipeline will create:
+- `<experiment_name>_FASTQ/` for results from FASTQ analysis
+- `<experiment_name>_RC/` for results from read count analysis
+
+This ensures that both analyses run independently without overwriting each other's results.
+
+### Required Input Files
+
+1. **Library File (library.csv)**:
+   - CSV format with columns for guide ID, gene, and sequence
+   - Example:
+     ```
+     sgRNA,Gene,Sequence
+     guide1,GENE1,ACGTACGTACGTACGTACGT
+     guide2,GENE2,GTACGTACGTACGTACGTAC
+     ```
+
+2. **Contrasts File (contrasts.csv)**:
+   - CSV format defining experimental contrasts
+   - Must contain columns for contrast name, control samples, and treatment samples
+   - Example:
+     ```
+     contrast,control,treatment
+     drug_vs_control,control1|control2,drug1|drug2
+     knockout_vs_wildtype,wt1|wt2,ko1|ko2
+     ```
+
+3. **Design Matrix (design_matrix.txt, optional)**:
+   - Tab-delimited file for MLE analysis
+   - First column must be 'Sample' followed by condition columns
+   - Example:
+     ```
+     Sample  Treatment  Replicate
+     control1    0    1
+     control2    0    2
+     drug1    1    1
+     drug2    1    2
+     ```
 
 ## Main Entrypoints
 
@@ -71,17 +194,131 @@ For each experiment, the pipeline creates a standardized directory structure:
 
 ```bash
 # Run full pipeline
-python pipeline.py --input /path/to/input --output /path/to/output --library /path/to/library.csv
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment
+
+# Run pipeline with specific contrasts file
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --contrasts-file /path/to/contrasts.csv --experiment-name my_experiment
+
+# Run pipeline without DrugZ analysis
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment --skip-drugz
 
 # Run pipeline without MLE analysis
-python pipeline.py --input /path/to/input --output /path/to/output --library /path/to/library.csv --skip-mle
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment --skip-mle
 
 # Process individual sample
-python run_individual_sample.py --fastq /path/to/sample.fastq --library /path/to/library.csv --output /path/to/output
+python run_individual_sample.py --fastq /path/to/sample.fastq --library-file /path/to/library.csv --output-dir /path/to/output
 
 # Run QC on existing results
 python run_qc.py --input /path/to/results --output /path/to/qc_output
 ```
+
+### Example Workflow for Dual Input Types
+
+If you have both FASTQ files and pre-processed count files in your input directory:
+
+```bash
+python pipeline.py --input-dir /path/to/mixed_input --output-dir /path/to/results --library-file /path/to/library.csv --experiment-name my_experiment
+```
+
+This will:
+1. Detect both FASTQ files and count files in the input directory
+2. Create two separate experiment directories:
+   - `/path/to/results/my_experiment_FASTQ/` - For FASTQ-based analysis
+   - `/path/to/results/my_experiment_RC/` - For read count-based analysis
+3. Run the full analysis pipeline on both data types independently
+4. Maintain separate log files and results for each analysis
+
+### Example Workflow
+
+1. **Prepare your input files**:
+   - Place your FASTQ files in the input directory or ensure count files are organized
+   - Create a library.csv file with guide information
+   - Create a contrasts.csv file to define your experimental contrasts
+   - (Optional) Create a design_matrix.txt for MLE analysis
+
+2. **Run the pipeline**:
+   ```bash
+   python pipeline.py --input-dir /path/to/fastq_dir --output-dir /path/to/results --library-file /path/to/library.csv --experiment-name my_experiment
+   ```
+
+3. **Analyze the results**:
+   - View the merged count table at `<output_dir>/<experiment_name>/<experiment_name>.count`
+   - Check analysis results for each contrast in their respective directories
+   - Explore the CSV files (`*_gMGK.csv`, `*_gMLE.csv`, `*_gDZ.csv`) for easy import into other tools
+   - Review the log file at `<output_dir>/<experiment_name>/<experiment_name>.log`
+
+## Understanding Analysis Results
+
+The pipeline produces several types of analysis files that are saved in standardized formats:
+
+### MAGeCK RRA Results (`*_RRA.gene_summary.txt` and `*_gMGK.csv`)
+
+MAGeCK RRA (Robust Rank Aggregation) performs a non-parametric analysis to identify genes with significant guide enrichment or depletion:
+
+- **Key columns**:
+  - `Gene`: Gene identifier
+  - `neg|score`: Depletion score (lower is more depleted)
+  - `neg|lfc`: Depletion log fold change
+  - `neg|p-value` and `neg|fdr`: Statistical significance for depletion
+  - `pos|score`: Enrichment score (lower is more enriched)
+  - `pos|lfc`: Enrichment log fold change
+  - `pos|p-value` and `pos|fdr`: Statistical significance for enrichment
+
+- **CSV format**:
+  The `*_gMGK.csv` file contains the same information reformatted for easy import into spreadsheet software or R.
+
+### MAGeCK MLE Results (`*_MLE.gene_summary.txt` and `*_gMLE.csv`)
+
+MAGeCK MLE (Maximum Likelihood Estimation) uses a negative binomial model to estimate gene effects:
+
+- **Key columns**:
+  - `Gene`: Gene identifier
+  - `Treatment|beta`: Effect size for each treatment/condition
+  - `Treatment|wald-p-value` and `Treatment|fdr`: Statistical significance for each condition
+  - `LRT p-value` and `LRT FDR`: Overall likelihood ratio test results
+
+- **CSV format**:
+  The `*_gMLE.csv` file contains the same information reformatted for easier import and analysis.
+
+### DrugZ Results (`*_DrugZ.txt` and `*_gDZ.csv`)
+
+DrugZ is specialized for analyzing drug-gene interactions in CRISPR screens:
+
+- **Key columns**:
+  - `GENE`: Gene identifier
+  - `NORM_CD`: Normalized change in abundance
+  - `Z_SCORE`: Z-score of the effect
+  - `P_VALUE` and `FDR`: Statistical significance
+
+- **CSV format**:
+  The `*_gDZ.csv` file contains the same information with standardized column headers for consistency.
+
+### Count Table (`<experiment_name>.count`)
+
+The merged count table is a tab-delimited file containing read counts for each guide across all samples:
+
+- **Format**:
+  - First column: Guide IDs
+  - Second column: Gene symbols
+  - Remaining columns: Read counts for each sample
+
+### Sample Sheet (`<experiment_name>_samples.txt`)
+
+The sample sheet lists all samples included in the analysis with their file paths:
+
+- **Format**:
+  - `sample`: Sample name
+  - `fastq`: Path to the FASTQ file or count file
+  - `condition`: Experimental condition (if available)
+
+### Log File (`<experiment_name>.log`)
+
+The log file contains a detailed record of the analysis process, including:
+
+- Command-line parameters used
+- Processing steps and timestamps
+- Warnings and errors encountered
+- Summary statistics for each analysis
 
 ## MAGeCK MLE Analysis
 

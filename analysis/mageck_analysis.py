@@ -113,14 +113,34 @@ def mageck_test_analysis(
         logging.error(f"MAGeCK test failed for contrast {output_prefix}")
         return (False, {"error": f"MAGeCK test failed: {output}"})
     
-    # Define expected output files
+    # Define expected output files with proper RRA naming convention
     expected_files = {
+        "gene_summary": os.path.join(output_dir, f"{output_prefix}_RRA.gene_summary.txt"),
+        "sgrna_summary": os.path.join(output_dir, f"{output_prefix}_RRA.sgrna_summary.txt"),
+        "log": os.path.join(output_dir, f"{output_prefix}.log")
+    }
+    
+    # Check if MAGeCK output files exist with default names
+    default_files = {
         "gene_summary": os.path.join(output_dir, f"{output_prefix}.gene_summary.txt"),
         "sgrna_summary": os.path.join(output_dir, f"{output_prefix}.sgrna_summary.txt"),
         "log": os.path.join(output_dir, f"{output_prefix}.log")
     }
     
-    # Check if output files exist
+    # Rename MAGeCK default files to follow required naming convention
+    for file_type in ["gene_summary", "sgrna_summary"]:
+        default_file = default_files[file_type]
+        expected_file = expected_files[file_type]
+        
+        if os.path.exists(default_file) and not os.path.exists(expected_file):
+            try:
+                import shutil
+                shutil.move(default_file, expected_file)
+                logging.info(f"Renamed {default_file} to {expected_file}")
+            except Exception as e:
+                logging.error(f"Error renaming {default_file} to {expected_file}: {str(e)}")
+    
+    # Check if output files exist with expected naming
     output_files = {}
     missing_files = []
     
@@ -152,7 +172,8 @@ def process_contrasts(
     count_table: str,
     output_dir: str,
     norm_method: str = DEFAULT_NORM_METHOD,
-    overwrite: bool = False
+    overwrite: bool = False,
+    target_contrast: Optional[str] = None
 ) -> Dict[str, Dict[str, str]]:
     """
     Process multiple contrasts defined in a contrasts file.
@@ -163,6 +184,7 @@ def process_contrasts(
         output_dir: Directory for output files
         norm_method: Normalization method
         overwrite: Whether to overwrite existing output files
+        target_contrast: If provided, only process this specific contrast
         
     Returns:
         Dictionary of results for each contrast
@@ -195,6 +217,12 @@ def process_contrasts(
     
     for _, row in contrasts_df.iterrows():
         contrast_name = row["contrast"]
+        
+        # Skip if this isn't the target contrast
+        if target_contrast and contrast_name != target_contrast:
+            logging.info(f"Skipping contrast {contrast_name}, not the target contrast")
+            continue
+            
         control_samples = [s.strip() for s in row["control"].split(",")]
         treatment_samples = [s.strip() for s in row["treatment"].split(",")]
         
@@ -202,15 +230,15 @@ def process_contrasts(
         logging.info(f"  Control samples: {control_samples}")
         logging.info(f"  Treatment samples: {treatment_samples}")
         
-        # Check if output files already exist
-        output_prefix = f"{contrast_name}_mageck"
-        gene_summary_file = os.path.join(output_dir, f"{output_prefix}.gene_summary.txt")
+        # Use the contrast name as the output prefix directly (no need for a subdirectory)
+        output_prefix = contrast_name
+        gene_summary_file = os.path.join(output_dir, f"{output_prefix}_RRA.gene_summary.txt")
         
         if os.path.exists(gene_summary_file) and not overwrite:
             logging.info(f"Skipping contrast {contrast_name}, output files already exist")
             results[contrast_name] = {
                 "gene_summary": gene_summary_file,
-                "sgrna_summary": os.path.join(output_dir, f"{output_prefix}.sgrna_summary.txt"),
+                "sgrna_summary": os.path.join(output_dir, f"{output_prefix}_RRA.sgrna_summary.txt"),
                 "log": os.path.join(output_dir, f"{output_prefix}.log")
             }
             continue
@@ -242,30 +270,30 @@ def run_drugz_analysis(
     drugz_script_path: Optional[str] = None,
     timeout: int = 900,
     overwrite: bool = False,
-    use_docker: bool = True
+    use_docker: bool = True,
+    target_contrast: Optional[str] = None
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Run DrugZ analysis for multiple contrasts.
+    Run DrugZ analysis for all contrasts in the contrasts file.
     
     Args:
         count_table: Path to the count table file
-        contrasts_file: Path to the contrasts file (CSV)
-        output_dir: Directory for output files
-        drugz_script_path: Path to the DrugZ.py script (will be auto-detected if None)
-        timeout: Timeout for DrugZ execution in seconds
+        contrasts_file: Path to the contrasts file
+        output_dir: Base directory for output files
+        drugz_script_path: Path to the DrugZ script (optional)
+        timeout: Timeout for DrugZ analysis in seconds
         overwrite: Whether to overwrite existing output files
-        use_docker: Whether to use Docker container for DrugZ (recommended)
+        use_docker: Whether to use Docker for running DrugZ
+        target_contrast: If provided, only process this specific contrast
         
     Returns:
         Dictionary of results for each contrast
     """
-    from analysis_pipeline.core.config import get_drugz_path
-    
-    logging.info(f"Running DrugZ analysis for contrasts in {contrasts_file}")
+    logging.info(f"Running DrugZ analysis using contrasts from {contrasts_file}")
     
     # Ensure the output directory exists
     ensure_output_dir(output_dir)
-
+    
     # Read contrasts file
     try:
         contrasts_df = pd.read_csv(contrasts_file)
@@ -289,6 +317,12 @@ def run_drugz_analysis(
     
     for _, row in contrasts_df.iterrows():
         contrast_name = row["contrast"]
+        
+        # Skip if this isn't the target contrast
+        if target_contrast and contrast_name != target_contrast:
+            logging.info(f"Skipping contrast {contrast_name}, not the target contrast")
+            continue
+            
         control_samples = [s.strip() for s in row["control"].split(",")]
         treatment_samples = [s.strip() for s in row["treatment"].split(",")]
         
@@ -296,164 +330,103 @@ def run_drugz_analysis(
         logging.info(f"  Control samples: {control_samples}")
         logging.info(f"  Treatment samples: {treatment_samples}")
         
-        # Check if output files already exist
-        output_prefix = f"{contrast_name}_drugz"
-        drugz_output_file = os.path.join(output_dir, f"{output_prefix}.txt")
+        # Use the contrast name directly for the output file
+        output_prefix = contrast_name
+        output_file = os.path.join(output_dir, f"{output_prefix}_DrugZ.txt")
         
-        if os.path.exists(drugz_output_file) and not overwrite:
+        if os.path.exists(output_file) and not overwrite:
             logging.info(f"Skipping DrugZ for contrast {contrast_name}, output file already exists")
-            results[contrast_name] = {"output_file": drugz_output_file}
+            results[contrast_name] = {
+                "drugz_scores": output_file,
+                "log": os.path.join(output_dir, f"{output_prefix}_DrugZ.log")
+            }
             continue
         
-        # Prepare control and treatment strings
-        control_str = ",".join(control_samples)
-        treatment_str = ",".join(treatment_samples)
-
-        # Create a temporary design file for this contrast
-        design_file = os.path.join(output_dir, f"{contrast_name}_drugz_design.txt")
+        # Run DrugZ - implementation will depend on whether using Docker or local installation
         try:
-            with open(design_file, 'w') as f:
-                f.write(f"SAMPLES\tCONDITION\n")
-                for sample in control_samples:
-                    f.write(f"{sample}\tCTRL\n")
-                for sample in treatment_samples:
-                    f.write(f"{sample}\tTREAT\n")
-            logging.info(f"Created design file for contrast {contrast_name} at {design_file}")
-        except Exception as e:
-            error_msg = f"Error creating design file for contrast {contrast_name}: {e}"
-            logging.error(error_msg)
-            results[contrast_name] = {"error": error_msg}
-            continue
-        
-        # Run DrugZ based on use_docker flag
-        if use_docker:
-            try:
-                from analysis_pipeline.analysis.run_drugz_docker import run_drugz_docker
+            if use_docker:
+                # Paths for Docker
+                count_dir = os.path.dirname(os.path.abspath(count_table))
                 
-                logging.info(f"Running DrugZ in Docker container for contrast {contrast_name}")
+                # Create Windows-compatible paths for Docker if needed
+                if os.name == 'nt':  # Windows
+                    volumes = {
+                        convert_win_path_to_docker(count_dir): {"bind": "/count", "mode": "ro"},
+                        convert_win_path_to_docker(output_dir): {"bind": "/output", "mode": "rw"}
+                    }
+                else:
+                    volumes = {
+                        count_dir: {"bind": "/count", "mode": "ro"},
+                        output_dir: {"bind": "/output", "mode": "rw"}
+                    }
                 
-                # Define arguments for DrugZ
-                drugz_args = {
-                    "ctrl": "CTRL",
-                    "f": "csv",
-                    "normtype": "median"
-                }
+                docker_count = f"/count/{os.path.basename(count_table)}"
+                docker_output = f"/output/{output_prefix}_DrugZ.txt"
+                
+                # Build Docker command
+                command = ["python", "/drugz/drugz.py", "-i", docker_count, "-o", docker_output]
+                
+                # Add control and treatment columns
+                for control in control_samples:
+                    command.extend(["-c", control])
+                for treatment in treatment_samples:
+                    command.extend(["-t", treatment])
                 
                 # Run DrugZ in Docker
-                success, output = run_drugz_docker(
-                    count_file=count_table,
-                    design_file=design_file,
-                    output_dir=output_dir,
-                    output_prefix=output_prefix,
-                    drugz_args=drugz_args
+                exit_code, output = run_docker_container(
+                    image="hartlab/drugz:latest",
+                    command=command,
+                    volumes=volumes,
+                    stream_logs=True,
+                    timeout=timeout
                 )
                 
-                if not success:
-                    error_msg = f"DrugZ Docker run failed for contrast {contrast_name}: {output}"
-                    logging.error(error_msg)
-                    results[contrast_name] = {"error": error_msg}
+                if exit_code != 0:
+                    logging.error(f"DrugZ analysis failed for contrast {contrast_name}")
+                    results[contrast_name] = {"error": f"DrugZ analysis failed: {output}"}
                     continue
                 
-                logging.info(f"DrugZ Docker run completed for contrast {contrast_name}")
+            else:
+                # Run DrugZ locally (simplified example)
+                if not drugz_script_path:
+                    drugz_script_path = "drugz.py"  # Assume in PATH
                 
-            except Exception as e:
-                error_msg = f"Error running DrugZ Docker for contrast {contrast_name}: {e}"
-                logging.error(error_msg)
-                results[contrast_name] = {"error": error_msg}
-                continue
-        else:
-            # Legacy mode - running without Docker
-            # Find DrugZ script if not provided
-            if drugz_script_path is None:
-                drugz_script_path = get_drugz_path()
-                
-            if not drugz_script_path or not os.path.exists(drugz_script_path):
-                error_msg = f"DrugZ script not found. Please provide the path to DrugZ.py."
-                logging.error(error_msg)
-                return {"error": {"message": error_msg}}
-            
-            logging.info(f"Using DrugZ script at {drugz_script_path}")
-            
-            # Run DrugZ
-            try:
-                import subprocess
-                from subprocess import PIPE
-                
+                # Build command for local execution
                 command = [
                     "python", drugz_script_path,
                     "-i", count_table,
-                    "-o", drugz_output_file,
-                    "-c", control_str,
-                    "-t", treatment_str,
-                    "-f", "csv"
+                    "-o", output_file
                 ]
                 
-                logging.info(f"Running DrugZ command: {' '.join(command)}")
+                # Add control and treatment columns
+                for control in control_samples:
+                    command.extend(["-c", control])
+                for treatment in treatment_samples:
+                    command.extend(["-t", treatment])
                 
-                # Execute DrugZ with timeout
-                process = subprocess.Popen(command, stdout=PIPE, stderr=PIPE)
+                # Run local command (simplified)
+                import subprocess
+                process = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
                 
-                try:
-                    stdout, stderr = process.communicate(timeout=timeout)
-                    exit_code = process.returncode
-                    
-                    stdout_text = stdout.decode() if stdout else ""
-                    stderr_text = stderr.decode() if stderr else ""
-                    
-                    if exit_code != 0:
-                        error_msg = f"DrugZ failed with exit code {exit_code} for contrast {contrast_name}: {stderr_text}"
-                        logging.error(error_msg)
-                        results[contrast_name] = {"error": error_msg}
-                        continue
-                    
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    error_msg = f"DrugZ timed out after {timeout} seconds for contrast {contrast_name}"
-                    logging.error(error_msg)
-                    results[contrast_name] = {"error": error_msg}
+                if process.returncode != 0:
+                    logging.error(f"DrugZ analysis failed for contrast {contrast_name}")
+                    results[contrast_name] = {"error": f"DrugZ analysis failed: {process.stderr}"}
                     continue
-                    
-            except Exception as e:
-                error_msg = f"Error running DrugZ for contrast {contrast_name}: {e}"
-                logging.error(error_msg)
-                results[contrast_name] = {"error": error_msg}
-                continue
-        
-        # Check if output file exists and is not empty
-        if not os.path.exists(drugz_output_file):
-            error_msg = f"DrugZ output file not found: {drugz_output_file}"
-            logging.error(error_msg)
-            results[contrast_name] = {"error": error_msg}
-            continue
-        
-        if os.path.getsize(drugz_output_file) == 0:
-            error_msg = f"DrugZ output file is empty: {drugz_output_file}"
-            logging.error(error_msg)
-            results[contrast_name] = {"error": error_msg}
-            continue
-        
-        # Try to read the output file to validate format
-        try:
-            drugz_df = pd.read_csv(drugz_output_file, sep='\t')
-            logging.info(f"DrugZ results file has {len(drugz_df)} rows")
             
-            # Convert to CSV for readability
-            csv_output_file = os.path.join(output_dir, f"{output_prefix}.csv")
-            drugz_df.to_csv(csv_output_file, index=False)
-            
-            results[contrast_name] = {
-                "output_file": drugz_output_file,
-                "csv_file": csv_output_file,
-                "rows": len(drugz_df)
-            }
+            # Check for output file
+            if os.path.exists(output_file):
+                logging.info(f"DrugZ analysis completed for contrast {contrast_name}")
+                results[contrast_name] = {
+                    "drugz_scores": output_file,
+                    "log": os.path.join(output_dir, f"{output_prefix}_DrugZ.log")
+                }
+            else:
+                logging.error(f"DrugZ output file not found: {output_file}")
+                results[contrast_name] = {"error": "DrugZ output file not found"}
             
         except Exception as e:
-            warning_msg = f"Warning: Error reading DrugZ output file {drugz_output_file}: {e}"
-            logging.warning(warning_msg)
-            results[contrast_name] = {
-                "output_file": drugz_output_file,
-                "warning": warning_msg
-            }
+            logging.error(f"Error running DrugZ for contrast {contrast_name}: {str(e)}")
+            results[contrast_name] = {"error": str(e)}
     
     return results
 
@@ -500,14 +473,14 @@ def mageck_mle_analysis(
     norm_method: str = DEFAULT_NORM_METHOD
 ) -> Tuple[bool, Dict[str, str]]:
     """
-    Run MAGeCK MLE analysis using a design matrix via Docker.
+    Run MAGeCK MLE analysis using Docker.
     
     Args:
         count_table: Path to the count table file
         design_matrix: Path to the design matrix file
         output_dir: Directory for output files
         output_prefix: Prefix for output files
-        norm_method: Normalization method (e.g., 'median', 'total')
+        norm_method: Normalization method
         
     Returns:
         Tuple of (success, output_files_dict)
@@ -532,7 +505,6 @@ def mageck_mle_analysis(
             convert_win_path_to_docker(design_dir): {"bind": "/design", "mode": "ro"},
             convert_win_path_to_docker(output_dir): {"bind": "/output", "mode": "rw"}
         }
-        logging.info("Running on Windows, converted Docker volume paths: %s", volumes)
     else:
         volumes = {
             count_dir: {"bind": "/count", "mode": "ro"},
@@ -571,17 +543,37 @@ def mageck_mle_analysis(
     )
     
     if exit_code != 0:
-        logging.error(f"MAGeCK MLE failed for {output_prefix}")
+        logging.error(f"MAGeCK MLE failed: {output}")
         return (False, {"error": f"MAGeCK MLE failed: {output}"})
     
-    # Define expected output files
+    # Define expected output files with proper MLE naming
     expected_files = {
+        "gene_summary": os.path.join(output_dir, f"{output_prefix}_MLE.gene_summary.txt"),
+        "sgrna_summary": os.path.join(output_dir, f"{output_prefix}_MLE.sgrna_summary.txt"),
+        "log": os.path.join(output_dir, f"{output_prefix}.log")
+    }
+    
+    # Check if MAGeCK output files exist with default names
+    default_files = {
         "gene_summary": os.path.join(output_dir, f"{output_prefix}.gene_summary.txt"),
         "sgrna_summary": os.path.join(output_dir, f"{output_prefix}.sgrna_summary.txt"),
         "log": os.path.join(output_dir, f"{output_prefix}.log")
     }
     
-    # Check if output files exist
+    # Rename MAGeCK default files to follow required naming convention
+    for file_type in ["gene_summary", "sgrna_summary"]:
+        default_file = default_files[file_type]
+        expected_file = expected_files[file_type]
+        
+        if os.path.exists(default_file) and not os.path.exists(expected_file):
+            try:
+                import shutil
+                shutil.move(default_file, expected_file)
+                logging.info(f"Renamed {default_file} to {expected_file}")
+            except Exception as e:
+                logging.error(f"Error renaming {default_file} to {expected_file}: {str(e)}")
+    
+    # Check if output files exist with expected naming
     output_files = {}
     missing_files = []
     
@@ -604,7 +596,7 @@ def mageck_mle_analysis(
         output_files["error"] = error_msg
         return (False, output_files)
     
-    logging.info(f"MAGeCK MLE completed successfully for {output_prefix}")
+    logging.info(f"MAGeCK MLE completed successfully")
     return (True, output_files)
 
 
@@ -612,42 +604,42 @@ def process_mle_analysis(
     count_table: str,
     design_matrix: str,
     output_dir: str,
-    experiment_name: str,
+    contrast_name: str,
     norm_method: str = DEFAULT_NORM_METHOD,
     overwrite: bool = False
 ) -> Dict[str, Dict[str, str]]:
     """
-    Process MAGeCK MLE analysis with a design matrix file.
+    Process MAGeCK MLE analysis for an experiment.
     
     Args:
         count_table: Path to the count table file
         design_matrix: Path to the design matrix file
         output_dir: Directory for output files
-        experiment_name: Name of the experiment (used as prefix)
+        contrast_name: Name of the contrast
         norm_method: Normalization method
         overwrite: Whether to overwrite existing output files
         
     Returns:
-        Dictionary of results
+        Dictionary of MLE results
     """
-    logging.info(f"Processing MAGeCK MLE analysis with design matrix: {design_matrix}")
+    logging.info(f"Processing MLE analysis for contrast {contrast_name}")
     
     # Ensure the output directory exists
     ensure_output_dir(output_dir)
     
     # Check if output files already exist
-    output_prefix = f"{experiment_name}_MLE"
-    gene_summary_file = os.path.join(output_dir, f"{output_prefix}.gene_summary.txt")
+    output_prefix = contrast_name
+    gene_summary_file = os.path.join(output_dir, f"{output_prefix}_MLE.gene_summary.txt")
     
     if os.path.exists(gene_summary_file) and not overwrite:
-        logging.info(f"Skipping MLE analysis, output files already exist: {gene_summary_file}")
+        logging.info(f"Skipping MLE analysis, output files already exist")
         return {
             "gene_summary": gene_summary_file,
-            "sgrna_summary": os.path.join(output_dir, f"{output_prefix}.sgrna_summary.txt"),
+            "sgrna_summary": os.path.join(output_dir, f"{output_prefix}_MLE.sgrna_summary.txt"),
             "log": os.path.join(output_dir, f"{output_prefix}.log")
         }
     
-    # Run MAGeCK MLE analysis
+    # Run MAGeCK MLE
     success, output_files = mageck_mle_analysis(
         count_table=count_table,
         design_matrix=design_matrix,
@@ -657,8 +649,8 @@ def process_mle_analysis(
     )
     
     if not success:
-        logging.error(f"MAGeCK MLE analysis failed for {experiment_name}")
-        return {"error": output_files.get("error", "Unknown error")}
+        logging.error(f"MAGeCK MLE failed for contrast {contrast_name}")
+    else:
+        logging.info(f"MAGeCK MLE completed for contrast {contrast_name}")
     
-    logging.info(f"MAGeCK MLE analysis completed for {experiment_name}")
     return output_files 
