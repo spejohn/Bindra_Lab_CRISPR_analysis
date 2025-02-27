@@ -108,13 +108,9 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
         input_files['design_matrix'] = str(design_files[0])
         logging.info(f"Found design matrix: {input_files['design_matrix']}")
         
-    # Look for data directory at the experiment level
-    data_dir = input_path / "data"
-    if data_dir.exists() and data_dir.is_dir():
-        logging.info(f"Found data directory: {data_dir}")
-        # Use this as our primary data search location
-        input_path = data_dir
-    
+    # We only recognize "fastq" and "counts" directories
+    # Do NOT look for generic "data" directory as it causes ambiguity
+
     # Walk through the input directory
     for root, dirs, files in os.walk(input_path):
         root_path = Path(root)

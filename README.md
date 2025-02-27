@@ -109,27 +109,17 @@ The pipeline now supports a more organized input structure with experiment-speci
 │   ├── contrasts.csv             # Contrast definitions file for this experiment
 │   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
 │   │
-│   └── data/                     # Data directory containing FASTQ and/or count files
-│       ├── sample1_R1.fastq.gz   # FASTQ files should follow standard naming
-│       ├── sample2_R1.fastq.gz
-│       └── ...
-│
-├── <experiment_name2>/           # Second experiment directory
-│   ├── library.csv               # CRISPR library file for this experiment
-│   ├── contrasts.csv             # Contrast definitions file for this experiment
-│   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
+│   ├── fastq/                    # Directory containing FASTQ files
+│   │   ├── sample1_R1.fastq.gz   # FASTQ files should follow standard naming
+│   │   ├── sample2_R1.fastq.gz
+│   │   └── ...
 │   │
-│   └── data/                     # Data directory containing FASTQ and/or count files
+│   └── counts/                   # Directory containing count files
 │       ├── other_sample1.count   # Count files for this experiment
 │       ├── other_sample2.count
 │       └── ...
-```
-
-Alternatively, data can be organized with separate fastq and counts directories:
-
-```
-<input_dir>/
-├── <experiment_name1>/           # First experiment directory
+│
+├── <experiment_name2>/           # Second experiment directory
 │   ├── library.csv               # CRISPR library file for this experiment
 │   ├── contrasts.csv             # Contrast definitions file for this experiment
 │   ├── design_matrix.txt         # Design matrix for MLE analysis (optional)
@@ -142,6 +132,8 @@ Alternatively, data can be organized with separate fastq and counts directories:
 │       ├── other_sample1.count
 │       └── ...
 ```
+
+**Note**: The pipeline only recognizes "fastq" and "counts" as valid data directories. Generic directory names like "data" are not supported to avoid ambiguity.
 
 When running the pipeline, the `experiment_name` parameter specifies which subdirectory to use for analysis:
 
