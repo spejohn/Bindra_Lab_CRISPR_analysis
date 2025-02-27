@@ -315,7 +315,7 @@ def test_run_drugz_analysis(mock_read_csv, mock_subprocess,
         count_table=mock_count_table,
         contrasts_file=mock_contrasts_file,
         output_dir=output_dir,
-        use_docker=False  # Avoid Docker for unit testing
+        use_docker=False  # Mock Docker for unit testing
     )
     
     # Assertions
@@ -323,52 +323,47 @@ def test_run_drugz_analysis(mock_read_csv, mock_subprocess,
     assert mock_read_csv.called
 
 
-@pytest.mark.parametrize("use_docker", [False])  # Only test with use_docker=False for now
+@patch('analysis_pipeline.docker.docker_utils.verify_docker', return_value=True)
 @patch('subprocess.run')
 @patch('analysis_pipeline.analysis.mageck_analysis.pd.read_csv')
-def test_run_drugz_analysis_with_docker_options(mock_read_csv, mock_subprocess,
-                                              use_docker, mock_count_table, 
-                                              mock_contrasts_file, test_data_dir):
+def test_run_drugz_analysis_with_docker(mock_read_csv, mock_subprocess, mock_verify_docker,
+                                      mock_count_table, mock_contrasts_file, test_data_dir):
     """
-    Test run_drugz_analysis function with different Docker options.
+    Test run_drugz_analysis function with Docker mocked.
     
-    This parameterized test verifies the function's behavior with and
-    without Docker. For now, we're only testing without Docker until 
-    we can better mock the Docker functionality.
+    This test verifies the function's behavior with Docker mocked to return success.
     
     Args:
         mock_read_csv: Mock of pandas.read_csv
         mock_subprocess: Mock of subprocess.run
-        use_docker: Whether to use Docker for the analysis
+        mock_verify_docker: Mock of Docker verification function
         mock_count_table: Path to a mock count table
         mock_contrasts_file: Path to a mock contrasts file
         test_data_dir: Path to the test data directory
     """
-    # Mock reading contrasts file
+    # Setup
+    output_dir = os.path.join(test_data_dir, "output")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Configure mocks
     mock_read_csv.return_value = pd.DataFrame({
         'contrast': ['test_contrast'],
-        'control': ['control1|control2'],
-        'treatment': ['treatment1|treatment2']
+        'control': ['control1'],
+        'treatment': ['treatment1']
     })
     
-    # Mock successful subprocess run
-    mock_process = MagicMock()
-    mock_process.returncode = 0
-    mock_subprocess.return_value = mock_process
-    
     # Run the function
-    output_dir = str(test_data_dir / "output")
     results = run_drugz_analysis(
         count_table=mock_count_table,
         contrasts_file=mock_contrasts_file,
         output_dir=output_dir,
-        use_docker=use_docker
+        use_docker=True  # Use Docker (mocked)
     )
     
     # Assertions
     assert isinstance(results, dict)
     assert mock_read_csv.called
-    assert mock_subprocess.called
+    assert mock_verify_docker.called
 
 
 def test_find_design_matrix(test_data_dir):

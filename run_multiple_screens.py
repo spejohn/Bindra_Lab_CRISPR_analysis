@@ -127,19 +127,19 @@ def run_all_screens(
     skip_drugz: bool = False,
     skip_qc: bool = False,
     skip_mle: bool = False,
-    use_docker: bool = True
+    use_docker: bool = True  # Always use Docker, kept for backward compatibility
 ) -> Dict[str, Any]:
     """
     Run the pipeline on all detected screens.
     
     Args:
         base_dir: Base directory containing screen directories
-        output_base_dir: Base directory for output (default: base_dir/results)
+        output_base_dir: Base directory for output (default: same level as base_dir, named "crispr_analysis_pipeline_results")
         overwrite: Whether to overwrite existing output files
         skip_drugz: Skip DrugZ analysis
         skip_qc: Skip quality control checks
         skip_mle: Skip MAGeCK MLE analysis
-        use_docker: Use Docker containers for analysis tools when available
+        use_docker: Parameter kept for backward compatibility (always True, Docker is required)
         
     Returns:
         Dictionary of results by screen
@@ -150,7 +150,9 @@ def run_all_screens(
     
     # Set default output base directory
     if output_base_dir is None:
-        output_base_dir = os.path.join(base_dir, "results")
+        # Get the parent directory of the base directory for the same level
+        base_parent = os.path.dirname(os.path.abspath(base_dir))
+        output_base_dir = os.path.join(base_parent, "crispr_analysis_pipeline_results")
     
     # Detect screen directories
     screen_dirs = detect_screen_directories(base_dir)
@@ -267,7 +269,6 @@ def main():
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip quality control checks")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers for analysis tools when available")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose output")
     
     args = parser.parse_args()
@@ -284,7 +285,7 @@ def main():
         skip_drugz=args.skip_drugz,
         skip_qc=args.skip_qc,
         skip_mle=args.skip_mle,
-        use_docker=args.use_docker
+        use_docker=True
     )
     
     print("Multi-screen analysis completed")

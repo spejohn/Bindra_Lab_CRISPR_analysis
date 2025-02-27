@@ -17,11 +17,11 @@ configfile: "config.yaml"
 
 # Default configuration values
 config.setdefault("input_dir", "input")
-config.setdefault("output_dir", "results")
+config.setdefault("output_dir", "crispr_analysis_pipeline_results")
 config.setdefault("experiment_name", "test_experiment")
 config.setdefault("norm_method", "median")
 config.setdefault("fdr_threshold", 0.05)
-config.setdefault("use_docker", False)  # Default to no Docker for tests
+# Docker is now required for all analyses, including tests
 
 
 # Locate test data

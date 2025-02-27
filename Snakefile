@@ -17,11 +17,10 @@ configfile: "config.yaml"  # Default config file - can be overridden with --conf
 
 # Default configuration values
 config.setdefault("input_dir", "input")
-config.setdefault("output_dir", "results")
+config.setdefault("output_dir", "crispr_analysis_pipeline_results")
 config.setdefault("experiment_name", "experiment")
 config.setdefault("norm_method", "median")
 config.setdefault("fdr_threshold", 0.05)
-config.setdefault("use_docker", True)
 
 # Helper functions
 def find_library_file(wildcards):
@@ -179,8 +178,7 @@ rule run_mageck_rra:
                     --contrasts-file {input.contrasts} \
                     --output-dir {input.directories} \
                     --norm-method {config[norm_method]} \
-                    --experiment-name {wildcards.screen} \
-                    --use-docker {config[use_docker]} > {log} 2>&1
+                    --experiment-name {wildcards.screen} > {log} 2>&1
             """)
         else:
             # Create empty output files if no contrasts file exists
@@ -204,8 +202,7 @@ rule run_mageck_mle:
                     --design-matrix {input.design_matrix} \
                     --output-dir {input.directories} \
                     --experiment-name {wildcards.screen} \
-                    --norm-method {config[norm_method]} \
-                    --use-docker {config[use_docker]} > {log} 2>&1
+                    --norm-method {config[norm_method]} > {log} 2>&1
             """)
         else:
             # Create empty output file if no design matrix exists
@@ -228,8 +225,7 @@ rule run_drugz:
                     --count-table {input.count_table} \
                     --contrasts-file {input.contrasts} \
                     --output-dir {input.directories} \
-                    --prefix {wildcards.screen} \
-                    --use-docker {config[use_docker]} > {log} 2>&1
+                    --prefix {wildcards.screen} > {log} 2>&1
             """)
         else:
             # Create empty output file if no contrasts file exists

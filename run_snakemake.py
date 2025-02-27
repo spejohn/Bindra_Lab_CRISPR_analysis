@@ -23,25 +23,58 @@ def setup_logging():
         ]
     )
 
+def get_available_cores():
+    """
+    Determine the number of available CPU cores.
+    
+    Order of precedence:
+    1. CRISPR_MAX_CORES environment variable
+    2. System CPU count
+    3. Default to 1 if unable to determine
+    
+    Returns:
+        int: Number of available cores
+    """
+    # Check for environment variable
+    if "CRISPR_MAX_CORES" in os.environ:
+        try:
+            cores = int(os.environ["CRISPR_MAX_CORES"])
+            if cores > 0:
+                return cores
+        except ValueError:
+            logging.warning(f"Invalid CRISPR_MAX_CORES value: {os.environ['CRISPR_MAX_CORES']}, using system detection")
+    
+    # Check system CPU count
+    try:
+        import multiprocessing
+        return multiprocessing.cpu_count()
+    except (ImportError, NotImplementedError):
+        pass
+    
+    # Default fallback
+    return 1
+
 def parse_args():
     """Parse command line arguments."""
+    # Get the default core count for help text
+    default_cores = get_available_cores()
+    
     parser = argparse.ArgumentParser(description="Run CRISPR analysis pipeline using Snakemake")
     
     # Input/output arguments
     parser.add_argument("input_dir", help="Directory containing CRISPR screen data")
-    parser.add_argument("-o", "--output-dir", help="Directory for results (default: input_dir/results)")
+    parser.add_argument("-o", "--output-dir", help="Directory for results (default: at same level as input_dir, named 'crispr_analysis_pipeline_results')")
     
     # Workflow control
     parser.add_argument("--configfile", help="Path to Snakemake config file")
-    parser.add_argument("-j", "--cores", type=int, default=1, help="Number of CPU cores to use")
+    parser.add_argument("-j", "--cores", type=int, 
+                        help=f"Number of CPU cores to use (default: auto-detected {default_cores} cores, override with -j or CRISPR_MAX_CORES env variable)")
     parser.add_argument("--dryrun", action="store_true", help="Show what would be done without executing")
-    parser.add_argument("--unlock", action="store_true", help="Unlock the working directory")
     
     # Analysis options
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers when available")
     
     # Snakemake parameters
     parser.add_argument("--snakemake-args", help="Additional arguments to pass to Snakemake", default="")
@@ -61,7 +94,9 @@ def run_snakemake(args):
     # Set default output directory if not specified
     output_dir = args.output_dir
     if not output_dir:
-        output_dir = os.path.join(args.input_dir, "results")
+        # Get the parent directory of the input directory for the same level
+        input_parent = os.path.dirname(os.path.abspath(args.input_dir))
+        output_dir = os.path.join(input_parent, "crispr_analysis_pipeline_results")
     
     # Set default config file if not specified
     configfile = args.configfile
@@ -70,11 +105,15 @@ def run_snakemake(args):
         if default_config.exists():
             configfile = str(default_config)
     
+    # Determine number of cores to use
+    cores = args.cores if args.cores is not None else get_available_cores()
+    logging.info(f"Using {cores} CPU cores for execution")
+    
     # Build Snakemake command as a single string for direct shell execution
     cmd_parts = [
         "snakemake",
         f"-s {str(snakefile)}",  # Snakefile path
-        f"-j {str(args.cores)}",  # Number of cores
+        f"-j {cores}",  # Number of cores
     ]
     
     # Add config file if specified
@@ -89,16 +128,15 @@ def run_snakemake(args):
         f"skip_drugz={str(args.skip_drugz).lower()}",
         f"skip_qc={str(args.skip_qc).lower()}",
         f"skip_mle={str(args.skip_mle).lower()}",
-        f"use_docker={str(args.use_docker).lower()}"
+        f"use_docker=true"  # Always use Docker
     ])
     
     # Add dryrun if specified
     if args.dryrun:
         cmd_parts.append("--dryrun")
     
-    # Add unlock if specified
-    if args.unlock:
-        cmd_parts.append("--unlock")
+    # Always add unlock (no longer an option)
+    cmd_parts.append("--unlock")
     
     # Add additional Snakemake arguments
     if args.snakemake_args:

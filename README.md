@@ -231,6 +231,43 @@ The pipeline still supports the following legacy input structures for backward c
 
 ## Usage
 
+### Snakemake Runner
+
+The simplest way to run the pipeline is using the Snakemake runner:
+
+```bash
+python analysis_pipeline/run_snakemake.py /path/to/screens_directory
+```
+
+Additional options:
+- `-o, --output-dir`: Set custom output directory (default: same level as input directory, named "crispr_analysis_pipeline_results")
+- `-j, --cores`: Number of CPU cores to use (default: auto-detected maximum cores)
+- `--dryrun`: Show what would be done without executing
+- `--skip-drugz`: Skip DrugZ analysis
+- `--skip-qc`: Skip quality control checks
+- `--skip-mle`: Skip MAGeCK MLE analysis
+- `--configfile`: Use a custom configuration file
+
+#### Automatic CPU Core Detection
+
+The pipeline automatically detects and uses all available CPU cores on your system. You can:
+
+1. Let the system automatically detect and use all available cores (default)
+2. Specify a specific number with the `-j` option (e.g., `-j 4`)
+3. Set the `CRISPR_MAX_CORES` environment variable to control maximum core usage:
+
+```bash
+# Set environment variable to use 8 cores maximum
+export CRISPR_MAX_CORES=8
+
+# Run pipeline (will use up to 8 cores)
+python analysis_pipeline/run_snakemake.py /path/to/screens_directory
+```
+
+This is particularly useful for HPC environments where you may want to use all allocated cores for your job.
+
+The pipeline automatically handles workflow locks, ensuring you can rerun the analysis anytime without worrying about lockfile errors that commonly occur if a previous run was interrupted.
+
 ```bash
 # Run full pipeline
 python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment
@@ -452,7 +489,7 @@ This ensures that file access within Docker containers works correctly regardles
 
 ## Docker Containers
 
-The pipeline now supports containerized execution of analysis tools, which provides several advantages:
+The pipeline uses containerized execution of analysis tools, which provides several advantages:
 
 - Consistent execution environment across different systems
 - No need to install tools and dependencies locally
@@ -478,17 +515,16 @@ cd analysis_pipeline/docker
 docker-compose build
 ```
 
-### Using Docker Containers
+### Docker Usage
 
-Docker containers are used automatically when running the pipeline if Docker is available. To enable Docker usage:
+Docker is required for the pipeline to function properly as all analysis tools run in Docker containers. The pipeline automatically uses Docker for all analyses.
 
 ```bash
 python analysis_pipeline/pipeline.py \
     --input-dir /path/to/fastq \
     --output-dir /path/to/output \
     --library-file /path/to/library.csv \
-    --experiment-name my_experiment \
-    --use-docker
+    --experiment-name my_experiment
 ```
 
 You can also use the DrugZ Docker container directly:
@@ -514,7 +550,7 @@ analysis_pipeline/docker/
 
 ## Snakemake Workflow
 
-The pipeline now includes a Snakemake workflow for improved reproducibility and dependency management:
+The pipeline includes a Snakemake workflow for improved reproducibility and dependency management:
 
 ```bash
 # Run the workflow with default settings
@@ -545,10 +581,10 @@ The workflow can be configured using a `config.yaml` file or command-line parame
 ```yaml
 # Example config.yaml
 input_dir: "input"
-output_dir: "results"
+output_dir: "crispr_analysis_pipeline_results"
 threads: 8
 skip_drugz: false
-use_docker: true
+# Docker is always enabled as it's required for analysis
 ```
 
 To use a custom config file:
@@ -601,3 +637,14 @@ If modifying the Snakefile, it's recommended to test changes with a dry run:
 ```bash
 python analysis_pipeline/run_snakemake.py --dryrun /path/to/screen_directory
 ```
+
+### Workflow Recovery and Locks
+
+The pipeline will automatically handle workflow locks that might occur if a previous run was interrupted unexpectedly (due to power loss, system crash, etc.). This eliminates the need for manual intervention to unlock workflows.
+
+If you encounter any unusual behavior after a workflow was interrupted, you can still perform a clean restart by:
+
+1. Running with `--dryrun` to see the planned workflow
+2. If needed, manually removing the `.snakemake` directory in your output folder
+   
+This automatic lock handling makes the pipeline more robust and user-friendly, especially for those new to Snakemake workflows.

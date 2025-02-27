@@ -3,13 +3,13 @@
 
 # Input/Output Settings
 input_dir: "input"             # Directory containing screen data
-output_dir: "results"          # Directory for results
+output_dir: "crispr_analysis_pipeline_results"  # Directory for results
 experiment_name: "experiment"  # Default experiment name prefix
 
 # Analysis Settings
 norm_method: "median"          # Normalization method for MAGeCK
 fdr_threshold: 0.05            # FDR threshold for significant hits
-use_docker: true               # Use Docker containers when available
+# Docker is always required and enabled by default
 
 # Resource Settings
 threads: 4                     # Number of threads to use

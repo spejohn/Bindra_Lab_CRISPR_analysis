@@ -72,7 +72,7 @@ def process_experiment_by_type(
     overwrite: bool = False,
     skip_drugz: bool = False,
     skip_mle: bool = False,
-    use_docker: bool = True,
+    use_docker: bool = True,  # Always use Docker by default
     data_type: str = "fastq"  # Either "fastq" or "count"
 ) -> Dict[str, Any]:
     """
@@ -90,7 +90,7 @@ def process_experiment_by_type(
         overwrite: Whether to overwrite existing output files
         skip_drugz: Skip DrugZ analysis
         skip_mle: Skip MAGeCK MLE analysis
-        use_docker: Use Docker containers for analysis tools when available
+        use_docker: Use Docker containers for analysis tools (always True, required for analysis)
         data_type: Type of data to process (fastq or count)
         
     Returns:
@@ -612,7 +612,6 @@ def main():
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip quality control checks")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker containers when available")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
@@ -662,14 +661,15 @@ def main():
         library_file=library_file,
         experiment_name=args.experiment_name,
         contrasts_file=contrasts_file,
+        sample_sheet=args.sample_sheet,
         norm_method=args.norm_method,
         fdr_threshold=args.fdr_threshold,
-        sample_sheet=args.sample_sheet,
         overwrite=args.overwrite,
         skip_drugz=args.skip_drugz,
         skip_qc=args.skip_qc,
         skip_mle=args.skip_mle,
-        use_docker=args.use_docker
+        use_docker=True,  # Always use Docker
+        verbose=args.verbose
     )
     
     if "error" in results:

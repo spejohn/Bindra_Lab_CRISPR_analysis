@@ -3,13 +3,13 @@
 
 # Input/Output Settings
 input_dir: "input"                # Directory containing test data
-output_dir: "results"             # Directory for test results
+output_dir: "crispr_analysis_pipeline_results"  # Directory for test results
 experiment_name: "test_experiment" # Test experiment prefix
 
 # Analysis Settings
 norm_method: "median"      # Normalization method for MAGeCK
 fdr_threshold: 0.05        # FDR threshold for significant hits
-use_docker: false          # Default to no Docker for tests
+# Docker is now required for all analyses, including tests
 
 # Resource Settings (keep minimal for tests)
 threads: 1                 # Use minimal threads for tests
