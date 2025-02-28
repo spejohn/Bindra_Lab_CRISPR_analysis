@@ -230,7 +230,9 @@ def process_all_samples(
     sample_sheet: Optional[pd.DataFrame] = None,
     count_options: Optional[Dict[str, Any]] = None,
     overwrite: bool = False,
-    experiment_name: Optional[str] = None
+    experiment_name: Optional[str] = None,
+    parallel: bool = True,
+    max_workers: int = 4
 ) -> Dict[str, str]:
     """
     Process all FASTQ samples in a directory to count files.
@@ -243,6 +245,8 @@ def process_all_samples(
         count_options: Options for the count function
         overwrite: Whether to overwrite existing count files
         experiment_name: Name of the experiment to look for in a subdirectory
+        parallel: Whether to use parallel processing
+        max_workers: Maximum number of parallel workers
         
     Returns:
         Dictionary mapping sample names to count file paths
@@ -290,43 +294,105 @@ def process_all_samples(
     # Count files dict to return
     count_files = {}
     
-    # Process each sample
-    for i, row in sample_sheet.iterrows():
-        sample_name = row["sample"]
-        if "fastq_path" not in row:
-            logging.warning(f"Missing fastq_path for sample {sample_name}, skipping")
-            continue
+    # Check if we should process in parallel
+    if parallel and len(sample_sheet) > 1:
+        import concurrent.futures
+        # Determine how many workers to use
+        n_workers = min(len(sample_sheet), max_workers)
+        logging.info(f"Processing {len(sample_sheet)} samples in parallel with {n_workers} workers")
+        
+        # Function to process a single sample in parallel
+        def process_single_sample(row_tuple):
+            i, row = row_tuple
+            sample_name = row["sample"]
             
-        fastq_path = os.path.join(fastq_dir, row["fastq_path"])
-        count_file = os.path.join(output_dir, f"{sample_name}.count")
+            if "fastq_path" not in row:
+                logging.warning(f"Missing fastq_path for sample {sample_name}, skipping")
+                return (sample_name, None)
+                
+            fastq_path = os.path.join(fastq_dir, row["fastq_path"])
+            count_file = os.path.join(output_dir, f"{sample_name}.count")
+            
+            logging.info(f"Processing sample {sample_name} ({i+1}/{len(sample_sheet)})")
+            
+            # Check if count file already exists and whether to overwrite
+            if os.path.exists(count_file) and not overwrite:
+                logging.info(f"Count file {count_file} already exists, skipping (use --overwrite to force recount)")
+                return (sample_name, count_file)
+            
+            # Check if FASTQ file exists
+            if not os.path.exists(fastq_path):
+                logging.error(f"FASTQ file {fastq_path} does not exist")
+                return (sample_name, None)
+            
+            # Count FASTQ file
+            success, result_file = mageck_count_single_sample(
+                fastq_file=fastq_path,
+                library_file=library_file,
+                output_dir=output_dir,
+                sample_name=sample_name,
+                count_options=count_options
+            )
+            
+            if success:
+                logging.info(f"Counted {sample_name} -> {result_file}")
+                return (sample_name, result_file)
+            else:
+                logging.error(f"Failed to count {sample_name}")
+                return (sample_name, None)
         
-        logging.info(f"Processing sample {sample_name} ({i+1}/{len(sample_sheet)})")
-        
-        # Check if count file already exists and whether to overwrite
-        if os.path.exists(count_file) and not overwrite:
-            logging.info(f"Count file {count_file} already exists, skipping (use --overwrite to force recount)")
-            count_files[sample_name] = count_file
-            continue
-        
-        # Check if FASTQ file exists
-        if not os.path.exists(fastq_path):
-            logging.error(f"FASTQ file {fastq_path} does not exist")
-            continue
-        
-        # Count FASTQ file
-        success, result_file = mageck_count_single_sample(
-            fastq_file=fastq_path,
-            library_file=library_file,
-            output_dir=output_dir,
-            sample_name=sample_name,
-            count_options=count_options
-        )
-        
-        if success:
-            count_files[sample_name] = result_file
-            logging.info(f"Counted {sample_name} -> {result_file}")
-        else:
-            logging.error(f"Failed to count {sample_name}")
+        # Process samples in parallel using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = {}
+            
+            # Submit all tasks
+            for i, row in sample_sheet.iterrows():
+                future = executor.submit(process_single_sample, (i, row))
+                futures[future] = row["sample"]
+            
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(futures):
+                sample_name, result_file = future.result()
+                if result_file:
+                    count_files[sample_name] = result_file
+    else:
+        # Process each sample sequentially
+        for i, row in sample_sheet.iterrows():
+            sample_name = row["sample"]
+            if "fastq_path" not in row:
+                logging.warning(f"Missing fastq_path for sample {sample_name}, skipping")
+                continue
+                
+            fastq_path = os.path.join(fastq_dir, row["fastq_path"])
+            count_file = os.path.join(output_dir, f"{sample_name}.count")
+            
+            logging.info(f"Processing sample {sample_name} ({i+1}/{len(sample_sheet)})")
+            
+            # Check if count file already exists and whether to overwrite
+            if os.path.exists(count_file) and not overwrite:
+                logging.info(f"Count file {count_file} already exists, skipping (use --overwrite to force recount)")
+                count_files[sample_name] = count_file
+                continue
+            
+            # Check if FASTQ file exists
+            if not os.path.exists(fastq_path):
+                logging.error(f"FASTQ file {fastq_path} does not exist")
+                continue
+            
+            # Count FASTQ file
+            success, result_file = mageck_count_single_sample(
+                fastq_file=fastq_path,
+                library_file=library_file,
+                output_dir=output_dir,
+                sample_name=sample_name,
+                count_options=count_options
+            )
+            
+            if success:
+                count_files[sample_name] = result_file
+                logging.info(f"Counted {sample_name} -> {result_file}")
+            else:
+                logging.error(f"Failed to count {sample_name}")
     
     logging.info(f"Processed {len(count_files)}/{len(sample_sheet)} samples")
     

@@ -1,53 +1,164 @@
+"""
+Utility functions for the CRISPR analysis pipeline.
+"""
+
+import os
+import sys
+import time
+import datetime
+import platform
+import functools
+import logging
+from typing import Optional, Dict, List, Any, Callable, Union
+import subprocess
+
+# Retry decorator for operations that might fail temporarily
+def retry_operation(max_attempts: int = 3, delay: int = 5, 
+                   error_types: tuple = (IOError, OSError, ConnectionError)):
+    """
+    Decorator that retries a function if it fails with specified error types.
+    
+    Args:
+        max_attempts: Maximum number of retry attempts
+        delay: Delay between retries in seconds
+        error_types: Tuple of exception types to catch and retry
+        
+    Returns:
+        Decorated function that will retry on failure
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            attempts = 0
+            last_exception = None
+            
+            while attempts < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except error_types as e:
+                    attempts += 1
+                    last_exception = e
+                    
+                    if attempts == max_attempts:
+                        logging.error(f"Operation failed after {max_attempts} attempts: {e}")
+                        raise
+                        
+                    logging.warning(f"Operation failed (attempt {attempts}/{max_attempts}), "
+                                   f"retrying in {delay} seconds: {e}")
+                    time.sleep(delay)
+            
+            # This shouldn't be reached due to the raise above, but just in case
+            if last_exception:
+                raise last_exception
+            
+        return wrapper
+    return decorator
+
+
 def check_docker_available() -> bool:
     """
-    Check if Docker is available on the system.
+    Check if Docker is available and working.
     
     Returns:
-        bool: True if Docker is available, False otherwise
+        True if Docker is available, False otherwise
     """
-    import subprocess
-    import logging
-    
     try:
-        result = subprocess.run(
-            ["docker", "--version"], 
-            stdout=subprocess.PIPE, 
+        # Try to import the docker module
+        import docker
+        
+        # Try to connect to the Docker daemon
+        client = docker.from_env()
+        client.ping()  # Will raise an exception if Docker is not running
+        logging.info("Docker is available")
+        return True
+    except ImportError:
+        logging.warning("Docker Python package is not installed")
+        return False
+    except Exception as e:
+        logging.warning(f"Docker is not available: {e}")
+        return False
+
+
+def run_subprocess(command: List[str], timeout: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Run a subprocess command and return the results.
+    
+    Args:
+        command: Command to run as a list of strings
+        timeout: Timeout in seconds
+        
+    Returns:
+        Dictionary with stdout, stderr, and return code
+    """
+    try:
+        # Start the process
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            check=False
+            universal_newlines=True
         )
         
-        if result.returncode == 0:
-            logging.info(f"Docker is available: {result.stdout.strip()}")
-            
-            # Also check if our images are available
-            images = ["crispr-analysis/mageck:latest", "crispr-analysis/drugz:latest"]
-            missing_images = []
-            
-            for image in images:
-                img_check = subprocess.run(
-                    ["docker", "image", "inspect", image],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False
-                )
-                
-                if img_check.returncode != 0:
-                    missing_images.append(image)
-            
-            if missing_images:
-                logging.warning(f"Docker is available but the following images are missing: {', '.join(missing_images)}")
-                logging.warning("Run 'docker-compose build' in the analysis_pipeline/docker directory to build the images")
-                return False
-            
-            return True
-        else:
-            logging.warning("Docker is not available or not in PATH")
-            return False
+        # Wait for the process to complete
+        stdout, stderr = process.communicate(timeout=timeout)
+        
+        return {
+            'stdout': stdout,
+            'stderr': stderr,
+            'returncode': process.returncode
+        }
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        logging.error(f"Command {' '.join(command)} timed out after {timeout} seconds")
+        return {
+            'stdout': stdout,
+            'stderr': stderr,
+            'returncode': -1,
+            'error': 'Timeout'
+        }
     except Exception as e:
-        logging.warning(f"Error checking Docker availability: {e}")
-        return False 
+        logging.error(f"Error running command {' '.join(command)}: {e}")
+        return {
+            'stdout': '',
+            'stderr': str(e),
+            'returncode': -1,
+            'error': str(e)
+        }
+
+
+def get_system_info() -> Dict[str, str]:
+    """
+    Get information about the system.
+    
+    Returns:
+        Dictionary with system information
+    """
+    info = {
+        'platform': platform.platform(),
+        'python_version': sys.version,
+        'hostname': platform.node(),
+        'date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    try:
+        # Try to get CPU info
+        import multiprocessing
+        info['cpu_count'] = str(multiprocessing.cpu_count())
+    except:
+        info['cpu_count'] = 'Unknown'
+    
+    try:
+        # Try to get memory info
+        import psutil
+        mem = psutil.virtual_memory()
+        info['memory_total'] = f"{mem.total / (1024**3):.1f} GB"
+        info['memory_available'] = f"{mem.available / (1024**3):.1f} GB"
+    except:
+        info['memory_total'] = 'Unknown'
+        info['memory_available'] = 'Unknown'
+    
+    return info
 
 def convert_win_path_to_docker(path_str):
     """

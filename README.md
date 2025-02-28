@@ -16,6 +16,8 @@ A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA an
 - **NEW: Snakemake workflow management for reproducible analyses**
 - **NEW: Cross-platform compatibility (Windows, macOS, Linux)**
 - **NEW: Enhanced Docker volume handling and path resolution**
+- **NEW: Improved parallel processing for both sample counting and contrast analysis**
+- **NEW: Code cleanup with backward compatibility for legacy function names**
 
 ## Directory Structure
 
@@ -648,3 +650,29 @@ If you encounter any unusual behavior after a workflow was interrupted, you can 
 2. If needed, manually removing the `.snakemake` directory in your output folder
    
 This automatic lock handling makes the pipeline more robust and user-friendly, especially for those new to Snakemake workflows.
+
+## Recent Updates
+
+### Code Cleanup and Backward Compatibility
+
+The codebase has been cleaned up to improve maintainability while ensuring backward compatibility:
+
+- Renamed functions now have backward compatibility wrappers to prevent breaking existing code:
+  - `ensure_directory_exists()` → `ensure_output_dir()`
+  - Added `find_files()` function for backward compatibility with older code
+
+### Parallel Processing Improvements
+
+- Sample counting now supports parallel processing with configurable worker count
+- Contrast analysis uses parallel processing for faster execution
+- Automatic detection of Snakemake environment to disable internal parallelism when appropriate
+
+### Error Handling and Recovery
+
+- Enhanced error recovery with retry mechanisms for file operations
+- Improved logging with progress reporting
+- Better handling of edge cases in file detection and processing
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
