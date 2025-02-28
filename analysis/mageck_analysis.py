@@ -291,6 +291,12 @@ def run_drugz_analysis(
     """
     logging.info(f"Running DrugZ analysis using contrasts from {contrasts_file}")
     
+    # Verify Docker is available if using Docker
+    if use_docker and not verify_docker():
+        error_msg = "Docker verification failed, cannot run DrugZ analysis"
+        logging.error(error_msg)
+        return {"error": {"message": error_msg}}
+    
     # Ensure the output directory exists
     ensure_output_dir(output_dir)
     

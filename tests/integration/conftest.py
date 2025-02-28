@@ -56,9 +56,10 @@ def setup_test_workflow(integration_test_data_dir, temp_workflow_dir):
     """
     # Create input and output directories
     input_dir = temp_workflow_dir / "input"
-    output_dir = temp_workflow_dir / "results"
     os.makedirs(input_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
+    
+    # The output directory should match what's specified in config.yaml
+    output_dir = temp_workflow_dir / "crispr_analysis_pipeline_results"
     
     # Copy test data and workflow files
     test_workflow_dir = Path(__file__).parent / "test_workflow"

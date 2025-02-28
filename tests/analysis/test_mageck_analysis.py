@@ -283,7 +283,7 @@ def test_process_contrasts_edge_cases(mock_test_analysis, mock_read_csv, contras
 @patch('subprocess.run')
 @patch('analysis_pipeline.analysis.mageck_analysis.pd.read_csv')
 def test_run_drugz_analysis(mock_read_csv, mock_subprocess,
-                         mock_count_table, mock_contrasts_file, test_data_dir):
+                          mock_count_table, mock_contrasts_file, test_data_dir):
     """
     Test run_drugz_analysis function.
     
@@ -323,20 +323,13 @@ def test_run_drugz_analysis(mock_read_csv, mock_subprocess,
     assert mock_read_csv.called
 
 
-@patch('analysis_pipeline.docker.docker_utils.verify_docker', return_value=True)
-@patch('subprocess.run')
-@patch('analysis_pipeline.analysis.mageck_analysis.pd.read_csv')
-def test_run_drugz_analysis_with_docker(mock_read_csv, mock_subprocess, mock_verify_docker,
-                                      mock_count_table, mock_contrasts_file, test_data_dir):
+def test_run_drugz_analysis_with_docker(mock_count_table, mock_contrasts_file, test_data_dir):
     """
     Test run_drugz_analysis function with Docker mocked.
     
     This test verifies the function's behavior with Docker mocked to return success.
     
     Args:
-        mock_read_csv: Mock of pandas.read_csv
-        mock_subprocess: Mock of subprocess.run
-        mock_verify_docker: Mock of Docker verification function
         mock_count_table: Path to a mock count table
         mock_contrasts_file: Path to a mock contrasts file
         test_data_dir: Path to the test data directory
@@ -345,25 +338,37 @@ def test_run_drugz_analysis_with_docker(mock_read_csv, mock_subprocess, mock_ver
     output_dir = os.path.join(test_data_dir, "output")
     os.makedirs(output_dir, exist_ok=True)
     
-    # Configure mocks
-    mock_read_csv.return_value = pd.DataFrame({
-        'contrast': ['test_contrast'],
-        'control': ['control1'],
-        'treatment': ['treatment1']
-    })
+    # Create a mock output file to simulate successful execution
+    output_file = os.path.join(output_dir, "test_contrast_DrugZ.txt")
+    with open(output_file, 'w') as f:
+        f.write("Gene\tScore\tP-value\n")
+        f.write("Gene1\t1.0\t0.05\n")
     
-    # Run the function
-    results = run_drugz_analysis(
-        count_table=mock_count_table,
-        contrasts_file=mock_contrasts_file,
-        output_dir=output_dir,
-        use_docker=True  # Use Docker (mocked)
-    )
-    
-    # Assertions
-    assert isinstance(results, dict)
-    assert mock_read_csv.called
-    assert mock_verify_docker.called
+    # Use context managers for patching
+    with patch('analysis_pipeline.analysis.mageck_analysis.verify_docker', return_value=True) as mock_verify_docker:
+        with patch('analysis_pipeline.docker.docker_utils.run_docker_container', return_value=(0, "Success")) as mock_run_docker:
+            with patch('analysis_pipeline.analysis.mageck_analysis.pd.read_csv') as mock_read_csv:
+                # Configure mocks
+                mock_read_csv.return_value = pd.DataFrame({
+                    'contrast': ['test_contrast'],
+                    'control': ['control1'],
+                    'treatment': ['treatment1']
+                })
+                
+                # Run the function
+                results = run_drugz_analysis(
+                    count_table=mock_count_table,
+                    contrasts_file=mock_contrasts_file,
+                    output_dir=output_dir,
+                    use_docker=True  # Use Docker (mocked)
+                )
+                
+                # Assertions
+                assert isinstance(results, dict)
+                assert mock_read_csv.called
+                assert mock_verify_docker.called
+                assert "test_contrast" in results
+                assert "drugz_scores" in results["test_contrast"]
 
 
 def test_find_design_matrix(test_data_dir):
