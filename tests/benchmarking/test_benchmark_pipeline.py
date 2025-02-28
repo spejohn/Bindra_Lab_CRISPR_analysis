@@ -176,7 +176,7 @@ def test_find_file_pairs(mock_path, mock_directory_structure):
 
 @patch('os.makedirs')
 @patch('shutil.copy2')
-@patch('analysis_pipeline.benchmarking.benchmark_pipeline.ensure_directory_exists')
+@patch('analysis_pipeline.benchmarking.benchmark_pipeline.ensure_output_dir')
 @patch('analysis_pipeline.benchmarking.benchmark_pipeline.Path')
 def test_copy_files_for_qc(mock_path, mock_ensure_dir, mock_copy, mock_makedirs):
     """Test copying files to the QC directory structure."""
@@ -218,7 +218,7 @@ def test_copy_files_for_qc(mock_path, mock_ensure_dir, mock_copy, mock_makedirs)
     assert mock_copy.call_count == 4
 
 
-@patch('analysis_pipeline.benchmarking.benchmark_pipeline.ensure_directory_exists')
+@patch('analysis_pipeline.benchmarking.benchmark_pipeline.ensure_output_dir')
 @patch('analysis_pipeline.benchmarking.benchmark_pipeline.calc_stats')
 @patch('pandas.read_csv')
 @patch('pandas.DataFrame.to_csv')

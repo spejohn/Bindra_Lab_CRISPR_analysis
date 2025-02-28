@@ -2,6 +2,8 @@
 
 A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA and MLE methods) and DrugZ analysis.
 
+**Current Version: 0.1.0**
+
 ## Features
 
 - Individual sample processing with Docker for better parallelization
@@ -17,7 +19,7 @@ A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA an
 - **NEW: Cross-platform compatibility (Windows, macOS, Linux)**
 - **NEW: Enhanced Docker volume handling and path resolution**
 - **NEW: Improved parallel processing for both sample counting and contrast analysis**
-- **NEW: Code cleanup with backward compatibility for legacy function names**
+- **NEW: Code cleanup and consistent function naming**
 
 ## Directory Structure
 
@@ -653,13 +655,13 @@ This automatic lock handling makes the pipeline more robust and user-friendly, e
 
 ## Recent Updates
 
-### Code Cleanup and Backward Compatibility
+### Code Cleanup and Function Naming
 
-The codebase has been cleaned up to improve maintainability while ensuring backward compatibility:
+The codebase has been cleaned up to improve maintainability:
 
-- Renamed functions now have backward compatibility wrappers to prevent breaking existing code:
-  - `ensure_directory_exists()` → `ensure_output_dir()`
-  - Added `find_files()` function for backward compatibility with older code
+- Standardized function names and eliminated redundant code
+- Added proper version tracking (starting with version 0.1.0)
+- Improved consistency in function interfaces and parameter names
 
 ### Parallel Processing Improvements
 

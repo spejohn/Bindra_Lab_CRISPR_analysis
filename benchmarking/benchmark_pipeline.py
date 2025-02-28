@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple
 
 from analysis_pipeline.core.logging_setup import setup_logging
-from analysis_pipeline.core.file_handling import ensure_directory_exists, find_files
+from analysis_pipeline.core.file_handling import ensure_output_dir
+import glob  # Added for find_files replacement
 from analysis_pipeline.qc.screening.screen_qa_qc import create_fill_QC_df, calc_stats
 
 def parse_arguments():
@@ -215,7 +216,7 @@ def copy_files_for_qc(
     
     # Create output directory
     output_path = Path(output_dir)
-    ensure_directory_exists(output_path)
+    ensure_output_dir(output_path)
     
     # Create QC directory structure and copy files
     for pair in file_pairs:
@@ -227,7 +228,7 @@ def copy_files_for_qc(
         
         # Create experiment/contrast directory
         qc_dir = output_path / experiment / contrast
-        ensure_directory_exists(qc_dir)
+        ensure_output_dir(qc_dir)
         
         # Copy generated file
         gen_dest = qc_dir / Path(gen_file).name
@@ -265,7 +266,7 @@ def run_direct_comparison(
     """
     # Create the output directory if it doesn't exist
     output_path = Path(output_dir)
-    ensure_directory_exists(output_path)
+    ensure_output_dir(output_path)
     
     # Initialize results DataFrame
     results = {
@@ -308,7 +309,7 @@ def run_direct_comparison(
             # Create plots directory if generating plots
             if generate_plots:
                 plots_dir = output_path / "plots" / experiment / contrast
-                ensure_directory_exists(plots_dir)
+                ensure_output_dir(plots_dir)
             else:
                 plots_dir = None
             

@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 
 from analysis_pipeline.core.logging_setup import setup_logging
-from analysis_pipeline.core.file_handling import ensure_directory_exists
+from analysis_pipeline.core.file_handling import ensure_output_dir
 from analysis_pipeline.qc.screening.screen_qa_qc import create_fill_QC_df
 
 def parse_arguments():
@@ -84,7 +84,7 @@ def main():
         return 1
     
     # Ensure output directory exists
-    ensure_directory_exists(output_dir)
+    ensure_output_dir(output_dir)
     
     try:
         # Run QC analysis

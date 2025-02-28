@@ -294,18 +294,6 @@ def ensure_output_dir(output_dir: str) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
 
-# Add backward compatibility function
-def ensure_directory_exists(directory: str) -> None:
-    """
-    Ensure the directory exists, creating it if necessary.
-    Backward compatibility function that calls ensure_output_dir.
-    
-    Args:
-        directory: Directory to create
-    """
-    return ensure_output_dir(directory)
-
-
 def create_experiment_dirs(base_dir: str, contrast_name: str) -> Dict[str, str]:
     """
     Create standard directory structure for a contrast.
@@ -455,27 +443,4 @@ def copy_file(src_path: str, dest_path: str) -> str:
         return dest_path
     except Exception as e:
         logging.error(f"Error copying file from {src_path} to {dest_path}: {str(e)}")
-        raise
-
-# Add backward compatibility function
-def find_files(directory: str, pattern: str = '*', recursive: bool = True) -> List[str]:
-    """
-    Find files matching the given pattern in the specified directory.
-    Backward compatibility function for code that used the old interface.
-    
-    Args:
-        directory: Directory to search in
-        pattern: Glob pattern to match files against
-        recursive: Whether to search recursively in subdirectories
-        
-    Returns:
-        List of matching file paths
-    """
-    import glob
-    
-    if recursive:
-        search_pattern = os.path.join(directory, '**', pattern)
-        return glob.glob(search_pattern, recursive=True)
-    else:
-        search_pattern = os.path.join(directory, pattern)
-        return glob.glob(search_pattern) 
+        raise 
