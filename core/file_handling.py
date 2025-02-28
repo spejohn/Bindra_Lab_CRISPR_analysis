@@ -426,9 +426,13 @@ def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
 
 
 @retry_operation(max_attempts=3, delay=2)
-def copy_file(src_path: str, dest_path: str) -> str:
+def copy_file(src_path, dest_path):
     """
-    Copy a file with retry mechanism for file access issues.
+    Copy a file from source to destination with error handling and automatic retries.
+    
+    This function includes robust error handling and uses the retry_operation decorator
+    to automatically retry failed copy operations. This is especially useful for
+    files that might be temporarily locked or inaccessible due to network issues.
     
     Args:
         src_path: Source file path
@@ -436,11 +440,29 @@ def copy_file(src_path: str, dest_path: str) -> str:
         
     Returns:
         Path to the copied file
+        
+    Raises:
+        Exception: If the file could not be copied after multiple attempts
     """
     try:
+        # Ensure the destination directory exists
+        dest_dir = os.path.dirname(dest_path)
+        if not os.path.exists(dest_dir):
+            os.makedirs(dest_dir, exist_ok=True)
+            logging.info(f"Created destination directory: {dest_dir}")
+            
         logging.info(f"Copying file from {src_path} to {dest_path}")
         shutil.copy2(src_path, dest_path)  # copy2 preserves metadata
+        
+        # Verify the file was copied
+        if os.path.exists(dest_path):
+            logging.info(f"File successfully copied to {dest_path}")
+        else:
+            logging.error(f"File copy verification failed - destination file does not exist: {dest_path}")
+            
         return dest_path
     except Exception as e:
         logging.error(f"Error copying file from {src_path} to {dest_path}: {str(e)}")
+        logging.error(f"Source file exists: {os.path.exists(src_path)}")
+        logging.error(f"Destination directory exists: {os.path.exists(os.path.dirname(dest_path))}")
         raise 

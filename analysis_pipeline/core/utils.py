@@ -184,10 +184,9 @@ def convert_win_path_to_docker(path_str):
         >>> convert_win_path_to_docker("/home/user/data")  # Non-Windows path
         '/home/user/data'
     """
-    import os
-    
     if os.name == 'nt':  # Windows
         if ':' in path_str:
             drive, rest = path_str.split(':', 1)
-            return f"/{drive.lower()}{rest.replace('\\', '/')}"
+            rest_converted = rest.replace('\\', '/')
+            return f"/{drive.lower()}{rest_converted}"
     return path_str.replace('\\', '/') 

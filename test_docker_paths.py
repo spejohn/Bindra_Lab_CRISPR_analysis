@@ -45,7 +45,8 @@ except ImportError:
             if os.name == 'nt':  # Windows
                 if ':' in path_str:
                     drive, rest = path_str.split(':', 1)
-                    return f"/{drive.lower()}{rest.replace('\\', '/')}"
+                    rest_converted = rest.replace('\\', '/')
+                    return f"/{drive.lower()}{rest_converted}"
             return path_str.replace('\\', '/')
 
 def test_path_conversion():

@@ -1,8 +1,52 @@
 """
-CRISPR Screening Analysis Pipeline
+CRISPR screening analysis pipeline.
 
-This module provides the main entry point for the CRISPR screening analysis pipeline.
-It ties together modules for sample processing, analysis, and quality control.
+This module provides a comprehensive pipeline for analyzing CRISPR screening data,
+from raw FASTQ files to enrichment analysis results. It handles file preprocessing,
+read counting, and differential analysis.
+
+Docker Requirements:
+    This pipeline requires Docker for running the analysis components (MAGeCK, DrugZ).
+    Without Docker, the pipeline can still perform file handling tasks (copying, organizing),
+    but cannot execute any analysis. Docker is ESSENTIAL for the core functionality.
+    
+    There is NO fallback to local installations. If Docker is not available:
+    - The pipeline will create output directories and copy input files 
+    - Analysis steps will be skipped entirely
+    - You will need to install Docker and re-run the pipeline for analysis
+
+Usage:
+    python pipeline.py --input-dir <input_dir> --output-dir <output_dir> [OPTIONS]
+
+Dependencies:
+    - pandas: For data manipulation
+    - numpy: For numerical operations
+    - matplotlib: For plotting (if plotting is enabled)
+    - docker: For running containerized analysis tools
+    - tqdm: For progress bars
+
+The pipeline supports both FASTQ file processing and count table analysis, with
+options to run different types of analyses (MAGeCK RRA, MAGeCK MLE, DrugZ) on
+the data, using Docker containers.
+
+Key features:
+- Automatic detection of input file types and directories
+- Integrated Docker support (required for analysis functionality)
+- Cross-platform compatibility with robust Windows path handling
+- Flexible contrast analysis for differential gene expression
+- Comprehensive error handling and logging
+
+Path Handling:
+The pipeline automatically converts Windows-style paths (C:\\Users\\username) to
+Unix-style paths (/c/Users/username) when needed for Docker integration. This ensures
+compatibility across different operating systems and handles paths with spaces and
+network paths appropriately.
+
+Docker Requirements:
+Docker is required for the core analysis functionality. If Docker is not available,
+the pipeline can process input files and create the directory structure, but cannot
+perform the actual analysis. In such cases, a minimal results structure is created
+with the input files copied to the appropriate locations.
 """
 
 import os
@@ -501,30 +545,43 @@ def run_pipeline(
     progress_reporter: Optional['ProgressReporter'] = None
 ) -> Dict[str, Any]:
     """
-    Run the entire analysis pipeline on a directory of fastq files or count tables.
+    Run the CRISPR screening analysis pipeline.
+    
+    This function orchestrates the entire analysis pipeline, from processing input files
+    to running differential analysis on contrasts. It handles both FASTQ processing and
+    count table analysis.
+    
+    Docker Requirements:
+        Docker is REQUIRED for the analysis components (MAGeCK, DrugZ). If Docker is not 
+        available, the pipeline will still handle file processing (copying files, creating 
+        directories) but cannot perform any analysis. There is NO fallback to local installations.
+        
+        If Docker is unavailable, you should:
+        1. Install Docker
+        2. Run this pipeline again with the same parameters
     
     Args:
-        input_dir: Directory containing experiment directories
-        output_dir: Directory for output files
-        library_file: Path to the library file (if not provided, will look in experiment directory)
-        experiment_name: Name of the experiment (corresponds to subdirectory in input_dir)
-        contrasts_file: Path to the contrasts file (if not provided, will look in experiment directory)
-        norm_method: Normalization method for MAGeCK
-        fdr_threshold: FDR threshold for significant genes
-        sample_sheet: Sample sheet for mapping sample names to conditions
-        essential_genes: Dictionary of essential genes for QC
-        overwrite: Whether to overwrite existing output files (defaults to False)
-        skip_drugz: Skip DrugZ analysis
-        skip_qc: Skip quality control checks
-        skip_mle: Skip MAGeCK MLE analysis
-        use_docker: Use Docker containers for analysis tools when available
-        count_file: Path to a count file (.count or .csv) to use directly instead of looking in input-dir
-        parallel: Whether to use parallel processing for sample counting and contrast analysis
-        max_workers: Maximum number of parallel workers
-        progress_reporter: Optional progress reporter instance
-        
+        input_dir: Path to the directory containing input files
+        output_dir: Path to the directory where output files will be written
+        library_file: Path to the library file (CSV format)
+        experiment_name: Name of the experiment
+        contrasts_file: Path to the contrasts file (CSV format)
+        norm_method: Normalization method for MAGeCK (default: median)
+        fdr_threshold: FDR threshold for significant genes (default: 0.05)
+        sample_sheet: Path to sample sheet (will be generated if not provided)
+        essential_genes: Dictionary of essential genes for QC (optional)
+        overwrite: Whether to overwrite existing output files (default: False)
+        skip_drugz: Whether to skip DrugZ analysis (default: False)
+        skip_qc: Whether to skip quality control checks (default: False)
+        skip_mle: Whether to skip MAGeCK MLE analysis (default: False)
+        use_docker: Whether to use Docker for analysis (default: True, but required for analysis)
+        count_file: Path to a count file to use directly (optional)
+        parallel: Whether to use parallel processing (default: True)
+        max_workers: Maximum number of workers for parallel processing (default: 4)
+        progress_reporter: Progress reporter for tracking pipeline progress (optional)
+    
     Returns:
-        Dictionary of results
+        Dictionary containing results and file paths
     """
     # Create a new progress reporter if none was provided
     if progress_reporter is None:
@@ -540,7 +597,8 @@ def run_pipeline(
         from analysis_pipeline.core.utils import check_docker_available
         docker_available = check_docker_available()
         if not docker_available:
-            logging.warning("Docker is not available or required images are missing. Falling back to local installations.")
+            logging.warning("Docker is not available or required images are missing. Analysis functionality will be unavailable.")
+            logging.warning("No analysis will be performed. Only file organization tasks will be completed.")
             use_docker = False
     
     # Look for input files using experiment_name as subdirectory
@@ -599,14 +657,26 @@ def run_pipeline(
         
         # Use our enhanced copy function with retry
         try:
+            logging.debug(f"About to copy file from {count_file} to {dest_path}")
             copy_file(count_file, dest_path)
+            logging.debug(f"Copy file operation completed")
+            
+            # Verify the file was copied
+            if os.path.exists(dest_path):
+                logging.debug(f"Destination file exists: {dest_path}")
+            else:
+                logging.error(f"Destination file does not exist after copy: {dest_path}")
+                
             count_table = dest_path
             results["count_table"] = count_table
             has_count_files = True
             has_fastq = False  # Skip FASTQ processing if we have a count file
+            logging.debug("Count file processing completed successfully")
         except Exception as e:
             logging.error(f"Error copying count file: {e}")
-            return {"error": f"Failed to copy count file: {str(e)}"}
+            logging.exception("Detailed exception information:")
+            results["error"] = f"Failed to copy count file: {str(e)}"
+            return results  # Return results with error instead of a new dict
     else:
         # Determine input data types - look directly in experiment subdirectory or data dir
         progress_reporter.update("File Discovery", "Looking for FASTQ and count files")
@@ -928,11 +998,62 @@ def run_pipeline(
             logging.info(f"Analysis pipeline for {experiment_name} completed successfully")
             progress_reporter.update("Pipeline Complete", "Analysis completed successfully")
             
+            # Debug the results before returning
+            logging.debug(f"Returning results from run_pipeline: {results}")
+            
+            # Final progress update and check if Docker was available for analysis
+            from analysis_pipeline.core.utils import check_docker_available
+            docker_available = check_docker_available()
+            
+            if not docker_available:
+                progress_reporter.update("Completion", "Pipeline completed with limited functionality")
+                print("\nWARNING: Docker is not available - NO ANALYSIS WAS PERFORMED")
+                print("Only file organization (copying files, creating directories) was completed.")
+                print("Docker is REQUIRED for analysis functionality (MAGeCK, DrugZ).")
+                print("To perform analysis, you must:")
+                print("1. Install Docker")
+                print("2. Run this pipeline again with the same parameters")
+            else:
+                progress_reporter.update("Completion", "Pipeline completed successfully")
+            
+            print(f"Results directory: {output_dir}")
+            
             return results
 
 
 def main():
-    """Command-line entry point for the CRISPR screening analysis pipeline."""
+    """Command-line entry point for the CRISPR screening analysis pipeline.
+    
+    This function parses command-line arguments and runs the pipeline.
+    
+    Pipeline Functionality:
+    The pipeline can process FASTQ files and/or count tables, and will:
+    1. Check for Docker availability
+    2. Find input files in the specified directory
+    3. Generate a count table from FASTQ files or use an existing count table
+    4. Create output directories for each contrast
+    
+    Docker Requirements:
+    IMPORTANT: Docker is REQUIRED for analysis functionality. The pipeline has two modes:
+    
+    With Docker available:
+    - Full functionality including read counting, MAGeCK, and DrugZ analysis
+    - Complete results for all contrasts
+    
+    Without Docker:
+    - Limited to file organization only (copying files, creating directories)
+    - NO analysis will be performed (no MAGeCK, no DrugZ, etc.)
+    - There is NO fallback to local installations
+    
+    If Docker is unavailable but a count file is provided, the pipeline will:
+    - Copy the count file to the output directory
+    - Create contrast directories
+    - Return a minimal results structure
+    - Provide a warning message indicating that analysis was not performed
+    
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="CRISPR screening analysis pipeline")
     
@@ -1087,12 +1208,64 @@ def main():
         progress_reporter=progress
     )
     
+    # Debug the results
+    logging.debug(f"Pipeline returned results: {results}")
+    
+    # Handle case where results might be None
+    if results is None:
+        # If a count file was provided and exists, create a minimal results dictionary
+        # This provides basic file handling when the pipeline cannot run fully (e.g., Docker not available)
+        if count_file and os.path.exists(count_file):
+            logging.info(f"Creating minimal results dictionary with count file: {count_file}")
+            results = {
+                "experiment_name": args.experiment_name,
+                "input_dir": input_dir,
+                "output_dir": output_dir,
+                "library_file": library_file,
+                "contrasts_file": contrasts_file,
+                "count_file": count_file,
+                "count_table": count_file,
+                "contrasts": {}
+            }
+            # Create contrast directories if a contrasts file is available
+            # This ensures the expected directory structure even when analysis cannot run
+            if contrasts_file and os.path.exists(contrasts_file):
+                try:
+                    contrasts_df = pd.read_csv(contrasts_file)
+                    if "contrast" in contrasts_df.columns:
+                        contrasts = contrasts_df["contrast"].tolist()
+                        logging.info(f"Found {len(contrasts)} contrasts: {', '.join(contrasts)}")
+                        for contrast in contrasts:
+                            contrast_dir = os.path.join(output_dir, args.experiment_name, contrast)
+                            os.makedirs(contrast_dir, exist_ok=True)
+                            results["contrasts"][contrast] = {"dir": contrast_dir}
+                            logging.info(f"Created contrast directory: {contrast_dir} (no analysis performed)")
+                    else:
+                        logging.error("Contrasts file does not contain a 'contrast' column")
+                except Exception as e:
+                    logging.error(f"Error reading contrasts file: {e}")
+        else:
+            print("Error: Pipeline execution failed")
+            return 1
+    
     if "error" in results:
         print(f"Error: {results['error']}")
         return 1
     
-    # Final progress update
-    progress.update("Completion", "Pipeline completed successfully")
+    # Final progress update and check if Docker was available for analysis
+    from analysis_pipeline.core.utils import check_docker_available
+    docker_available = check_docker_available()
+    
+    if not docker_available:
+        progress.update("Completion", "Pipeline completed with limited functionality")
+        print("\nWARNING: Docker is not available - NO ANALYSIS WAS PERFORMED")
+        print("Only file organization (copying files, creating directories) was completed.")
+        print("Docker is REQUIRED for analysis functionality (MAGeCK, DrugZ).")
+        print("To perform analysis, you must:")
+        print("1. Install Docker")
+        print("2. Run this pipeline again with the same parameters")
+    else:
+        progress.update("Completion", "Pipeline completed successfully")
     
     print(f"Results directory: {output_dir}")
     

@@ -128,6 +128,9 @@ def run_snakemake():
         if targets:
             cmd.extend(targets)
         
+        # Print the command for debugging
+        print(f"Running command: {' '.join(cmd)} in directory {workflow_dir}")
+
         # Run Snakemake
         try:
             result = subprocess.run(
@@ -138,6 +141,12 @@ def run_snakemake():
                 check=False
             )
             success = result.returncode == 0
+            
+            # Print error info if the command failed
+            if not success:
+                print(f"Command failed with return code: {result.returncode}")
+                print(f"Error output: {result.stderr}")
+                
             return {
                 "success": success,
                 "output": result.stdout,

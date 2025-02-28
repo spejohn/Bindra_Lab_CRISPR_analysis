@@ -162,7 +162,10 @@ def log_system_info():
     
     try:
         import docker
-        logging.info(f"Docker SDK version: {docker.__version__}")
+        try:
+            logging.info(f"Docker SDK version: {docker.__version__}")
+        except AttributeError:
+            logging.warning("Docker SDK installed but version information not available")
     except ImportError:
         logging.warning("Docker SDK not installed")
     
