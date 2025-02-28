@@ -13,8 +13,63 @@ from typing import Set, List, Dict, Any, Optional, Union
 from analysis_pipeline.core.config import (
     CONTRAST_TABLE_PATTERN,
     READ_COUNT_PATTERN,
-    FASTQ_PATTERNS
+    FASTQ_PATTERNS,
+    COUNT_CSV_PATTERN
 )
+
+# Define patterns
+DESIGN_MATRIX_PATTERN = "*.txt"
+
+
+def make_count_table(rc_file: str, output_dir: Optional[str] = None) -> str:
+    """
+    Convert a read count table from CSV to tab-delimited format for MAGeCK.
+    
+    Args:
+        rc_file: Path to read count CSV file
+        output_dir: Optional output directory (defaults to same as rc_file)
+        
+    Returns:
+        Path to the tab-delimited count table
+    """
+    try:
+        rc_path = Path(rc_file)
+        out_dir = Path(output_dir) if output_dir else rc_path.parent
+        
+        # Ensure output directory exists
+        os.makedirs(out_dir, exist_ok=True)
+        
+        # Load the read count table
+        rc_data = pd.read_csv(rc_path)
+        logging.info(f"Loaded read count table: {rc_file} with {len(rc_data)} rows")
+        
+        # Create the count table filename
+        count_file = out_dir / rc_path.name.replace(".csv", ".count.txt")
+        
+        # Save as tab-delimited
+        rc_data.to_csv(count_file, sep="\t", index=False)
+        logging.info(f"Created tab-delimited count table: {count_file}")
+        
+        return str(count_file)
+        
+    except Exception as e:
+        logging.error(f"Error creating count table from {rc_file}: {str(e)}")
+        raise
+
+
+def fnmatch_lower(name: str, pattern: str) -> bool:
+    """
+    Case-insensitive version of fnmatch.
+    
+    Args:
+        name: String to match
+        pattern: Pattern to match against
+        
+    Returns:
+        True if name matches pattern, False otherwise
+    """
+    import fnmatch
+    return fnmatch.fnmatch(name.lower(), pattern.lower())
 
 
 def reverse_dir(input_dir: str, root: str, output_dir: str) -> Path:
@@ -85,7 +140,6 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
     }
     
     # Define patterns for recognizing design matrix files
-    DESIGN_MATRIX_PATTERN = "*design*.txt"
     LIBRARY_PATTERNS = ["*library*.csv", "*library*.txt", "*guide*.csv", "*guide*.txt"]
     
     fastq_dirs = {}  # Track FASTQ directories we've already processed
@@ -128,20 +182,38 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
         design_path = str(root_path / design_files[0]) if design_files else input_files.get('design_matrix')
         
         # Check if this is a read count directory
-        if "read_count" in root.lower() or any(f.lower().endswith('.count') for f in files):
+        if "read_count" in root.lower() or "_rc" in root.lower() or any(f.lower().endswith('.count') for f in files):
             # Find read count files (RC files)
             rc_files = [f for f in files if fnmatch_lower(f, READ_COUNT_PATTERN)]
             
-            if rc_files and cnttbl_path:
-                # Process each read count file
-                for rc_file in rc_files:
-                    rc_path = str(root_path / rc_file)
-                    input_files['read_counts'][rc_path] = {
+            # Also look for CSV files that match our count patterns
+            csv_count_files = []
+            for pattern in COUNT_CSV_PATTERN:
+                csv_count_files.extend([f for f in files if fnmatch_lower(f, pattern)])
+            
+            # Combine both types of count files
+            all_count_files = rc_files + csv_count_files
+            
+            if all_count_files and cnttbl_path:
+                # Process each count file
+                for count_file in all_count_files:
+                    count_path = str(root_path / count_file)
+                    
+                    # Convert CSV to tab-delimited if needed
+                    if count_file.lower().endswith('.csv'):
+                        try:
+                            count_path = make_count_table(count_path)
+                            logging.info(f"Converted CSV count file to tab-delimited: {count_path}")
+                        except Exception as e:
+                            logging.error(f"Error converting CSV count file {count_path}: {str(e)}")
+                            continue
+                    
+                    input_files['read_counts'][count_path] = {
                         'contrast_table': cnttbl_path,
                         'design_matrix': design_path
                     }
                 
-                logging.info(f"Found {len(rc_files)} read count files in {root}")
+                logging.info(f"Found {len(all_count_files)} count files in {root}")
                 
         # Check if this is a FASTQ directory
         elif "fastq" in root.lower() and root not in fastq_dirs:
@@ -170,21 +242,6 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
     return input_files
 
 
-def fnmatch_lower(filename: str, pattern: str) -> bool:
-    """
-    Case-insensitive file pattern matching.
-    
-    Args:
-        filename: Filename to match
-        pattern: Pattern to match against (with wildcards)
-        
-    Returns:
-        True if the filename matches the pattern, False otherwise
-    """
-    import fnmatch
-    return fnmatch.fnmatch(filename.lower(), pattern.lower())
-
-
 def ensure_output_dir(output_dir: str) -> None:
     """
     Ensure the output directory exists.
@@ -194,42 +251,6 @@ def ensure_output_dir(output_dir: str) -> None:
     """
     os.makedirs(output_dir, exist_ok=True)
     logging.info(f"Output directory created/verified: {output_dir}")
-
-
-def make_count_table(rc_file: str, output_dir: Optional[str] = None) -> str:
-    """
-    Convert a read count table from CSV to tab-delimited format for MAGeCK.
-    
-    Args:
-        rc_file: Path to read count CSV file
-        output_dir: Optional output directory (defaults to same as rc_file)
-        
-    Returns:
-        Path to the tab-delimited count table
-    """
-    try:
-        rc_path = Path(rc_file)
-        out_dir = Path(output_dir) if output_dir else rc_path.parent
-        
-        # Ensure output directory exists
-        os.makedirs(out_dir, exist_ok=True)
-        
-        # Load the read count table
-        rc_data = pd.read_csv(rc_path)
-        logging.info(f"Loaded read count table: {rc_file} with {len(rc_data)} rows")
-        
-        # Create the count table filename
-        count_file = out_dir / rc_path.name.replace(".csv", ".count.txt")
-        
-        # Save as tab-delimited
-        rc_data.to_csv(count_file, sep="\t", index=False)
-        logging.info(f"Created tab-delimited count table: {count_file}")
-        
-        return str(count_file)
-        
-    except Exception as e:
-        logging.error(f"Error creating count table from {rc_file}: {str(e)}")
-        raise
 
 
 def create_experiment_dirs(base_dir: str, contrast_name: str) -> Dict[str, str]:

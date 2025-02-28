@@ -17,7 +17,9 @@ DEFAULT_FDR_THRESHOLD = 0.05  # FDR threshold for significant hits
 # File patterns
 FASTQ_PATTERNS = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
 CONTRAST_TABLE_PATTERN = "*contrast*.txt"
-READ_COUNT_PATTERN = "*count*.csv"
+READ_COUNT_PATTERN = "*count*"  # Generic pattern for count files regardless of extension
+COUNT_CSV_PATTERN = ["*count*.csv", "*read_count*.csv", "*_rc*.csv"]  # Specific patterns for CSV count files
+COUNT_FILE_EXTENSIONS = [".count", ".csv"]  # Valid extensions for count files
 RESULTS_MAGECK_PATTERN = "*_gMGK.csv"
 RESULTS_DRUGZ_PATTERN = "*_gDZ.csv"
 DESIGN_MATRIX_PATTERN = "*design*.txt"  # New pattern for design matrix files

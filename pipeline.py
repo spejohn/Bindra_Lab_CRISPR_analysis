@@ -27,7 +27,8 @@ from analysis_pipeline.core.file_handling import (
     reverse_dir,
     find_input_files,
     create_experiment_dirs,
-    convert_results_to_csv
+    convert_results_to_csv,
+    make_count_table
 )
 from analysis_pipeline.core.validation import (
     validate_library_file,
@@ -157,8 +158,21 @@ def process_experiment_by_type(
             return {"error": "Failed to create merged count table"}
     
     elif data_type == "count":
-        # Look for existing count tables
+        # Look for existing count tables or CSV files
         count_tables = glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True)
+        csv_tables = glob.glob(os.path.join(input_dir, '**/*.csv'), recursive=True)
+        
+        # Filter and prioritize CSV tables that look like count data
+        count_related_csv = []
+        for csv_file in csv_tables:
+            base_name = os.path.basename(csv_file).lower()
+            if 'count' in base_name or 'read_count' in base_name or '_rc' in base_name:
+                count_related_csv.append(csv_file)
+                
+        # Log what we found
+        if count_related_csv:
+            logging.info(f"Found {len(count_related_csv)} CSV files that appear to be count data")
+            
         if count_tables:
             count_table = count_tables[0]
             # Copy the count table to the experiment directory
@@ -168,9 +182,21 @@ def process_experiment_by_type(
             count_table = dest_path
             results["count_table"] = count_table
             logging.info(f"Using existing count table: {count_table}")
+        elif count_related_csv:
+            # Use the first count-related CSV file
+            csv_file = count_related_csv[0]
+            count_table = make_count_table(csv_file, base_exp_dir)
+            results["count_table"] = count_table
+            logging.info(f"Converted CSV to tab-delimited format: {count_table} (prioritized as count data)")
+        elif csv_tables:
+            # If no count-specific CSV files found, use the first available CSV
+            csv_file = csv_tables[0]
+            count_table = make_count_table(csv_file, base_exp_dir)
+            results["count_table"] = count_table
+            logging.info(f"Converted CSV to tab-delimited format: {count_table} (using first available CSV)")
         else:
-            logging.error("No count tables found")
-            return {"error": "No count tables found"}
+            logging.error("No count tables or CSV files found")
+            return {"error": "No count tables or CSV files found"}
     
     # Run analysis for each contrast
     if contrasts and count_table:
@@ -268,7 +294,8 @@ def run_pipeline(
     skip_drugz: bool = False,
     skip_qc: bool = False,
     skip_mle: bool = False,
-    use_docker: bool = True
+    use_docker: bool = True,
+    count_file: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Run the entire analysis pipeline on a directory of fastq files or count tables.
@@ -288,6 +315,7 @@ def run_pipeline(
         skip_qc: Skip quality control checks
         skip_mle: Skip MAGeCK MLE analysis
         use_docker: Use Docker containers for analysis tools when available
+        count_file: Path to a count file (.count or .csv) to use directly instead of looking in input-dir
         
     Returns:
         Dictionary of results
@@ -343,247 +371,284 @@ def run_pipeline(
         "count_files": {}
     }
     
-    # Determine input data types - look directly in experiment subdirectory or data dir
-    # Check in experiment directory first
-    fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fastq*")
-    fastq_files = glob.glob(fastq_pattern, recursive=True)
-    
-    # If no fastq files found in experiment dir, check in data dir
-    if not fastq_files:
-        fastq_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.fastq*")
-        fastq_files = glob.glob(fastq_pattern, recursive=True)
-    
-    # Also look for fastq in fastq subdirectory
-    if not fastq_files:
-        fastq_pattern = os.path.join(input_dir, experiment_name, "fastq", "**", "*.fastq*")
-        fastq_files = glob.glob(fastq_pattern, recursive=True)
-        
-    # Also try fq extension
-    if not fastq_files:
-        fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fq*")
-        fastq_files = glob.glob(fastq_pattern, recursive=True)
-        
-    # Check count files
-    count_pattern = os.path.join(input_dir, experiment_name, "**", "*.count")
-    count_files = glob.glob(count_pattern, recursive=True)
-    
-    # If no count files found, check in data dir
-    if not count_files:
-        count_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.count")
-        count_files = glob.glob(count_pattern, recursive=True)
-    
-    # Also look for count files in counts subdirectory
-    if not count_files:
-        count_pattern = os.path.join(input_dir, experiment_name, "counts", "**", "*.count")
-        count_files = glob.glob(count_pattern, recursive=True)
-        
-    has_fastq = len(fastq_files) > 0
-    has_count_files = len(count_files) > 0
-    
-    logging.info(f"Found {len(fastq_files)} FASTQ files and {len(count_files)} count files")
-    
-    # If both types exist, create separate experiment directories
-    if has_fastq and has_count_files:
-        logging.info(f"Found both FASTQ files and pre-processed count files. Creating separate analysis directories.")
-        
-        # Process FASTQ files
-        if has_fastq:
-            fastq_exp_name = f"{experiment_name}_FASTQ"
-            fastq_results = process_experiment_by_type(
-                input_dir=input_dir,
-                output_dir=output_dir,
-                library_file=library_file,
-                experiment_name=fastq_exp_name,
-                contrasts_file=contrasts_file,
-                contrasts=contrasts,
-                norm_method=norm_method,
-                sample_sheet=sample_sheet,
-                overwrite=overwrite,
-                skip_drugz=skip_drugz,
-                skip_mle=skip_mle,
-                use_docker=use_docker,
-                data_type="fastq"
-            )
-            results["fastq_analysis"] = fastq_results
-        
-        # Process count files
-        if has_count_files:
-            count_exp_name = f"{experiment_name}_RC"
-            count_results = process_experiment_by_type(
-                input_dir=input_dir,
-                output_dir=output_dir,
-                library_file=library_file,
-                experiment_name=count_exp_name,
-                contrasts_file=contrasts_file,
-                contrasts=contrasts,
-                norm_method=norm_method,
-                sample_sheet=sample_sheet,
-                overwrite=overwrite,
-                skip_drugz=skip_drugz,
-                skip_mle=skip_mle,
-                use_docker=use_docker,
-                data_type="count"
-            )
-            results["count_analysis"] = count_results
-        
-        return results
+    # If a specific count file was provided, use it directly
+    if count_file and os.path.exists(count_file):
+        logging.info(f"Using user-provided count file: {count_file}")
+        # Copy the count file to the experiment directory
+        dest_path = os.path.join(output_dir, f"{experiment_name}.count")
+        import shutil
+        shutil.copy(count_file, dest_path)
+        count_table = dest_path
+        results["count_table"] = count_table
+        has_count_files = True
+        has_fastq = False  # Skip FASTQ processing if we have a count file
     else:
-        # Only one type exists, proceed with standard processing
-        # Create base experiment directory
-        base_exp_dir = os.path.join(output_dir, experiment_name)
-        os.makedirs(base_exp_dir, exist_ok=True)
+        # Determine input data types - look directly in experiment subdirectory or data dir
+        # Check in experiment directory first
+        fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fastq*")
+        fastq_files = glob.glob(fastq_pattern, recursive=True)
         
-        # Setup a single log file for the entire experiment
-        log_file = os.path.join(base_exp_dir, f"{experiment_name}.log")
-        setup_logging(log_file=log_file)
+        # If no fastq files found in experiment dir, check in data dir
+        if not fastq_files:
+            fastq_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.fastq*")
+            fastq_files = glob.glob(fastq_pattern, recursive=True)
         
-        # Log system information
-        log_system_info()
+        # Also look for fastq in fastq subdirectory
+        if not fastq_files:
+            fastq_pattern = os.path.join(input_dir, experiment_name, "fastq", "**", "*.fastq*")
+            fastq_files = glob.glob(fastq_pattern, recursive=True)
         
-        logging.info(f"Starting pipeline for {experiment_name}")
-        logging.info(f"Input directory: {input_dir}")
-        logging.info(f"Output directory: {output_dir}")
-        logging.info(f"Library file: {library_file}")
+        # Also try fq extension
+        if not fastq_files:
+            fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fq*")
+            fastq_files = glob.glob(fastq_pattern, recursive=True)
         
-        if contrasts_file:
-            logging.info(f"Contrasts file: {contrasts_file}")
+        # Check count files
+        count_pattern = os.path.join(input_dir, experiment_name, "**", "*.count")
+        count_files = glob.glob(count_pattern, recursive=True)
         
-        results["log_file"] = log_file
+        # If no count files found, check in data dir
+        if not count_files:
+            count_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.count")
+            count_files = glob.glob(count_pattern, recursive=True)
         
-        # Generate sample sheet for the experiment
-        if sample_sheet is None:
-            sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
-            generate_sample_sheet(input_dir, base_exp_dir, experiment_name, experiment_name=experiment_name)
-            results["sample_sheet"] = sample_sheet_path
-        else:
-            # Copy the user-provided sample sheet to the experiment directory
-            sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
-            import shutil
-            shutil.copy(sample_sheet, sample_sheet_path)
-            results["sample_sheet"] = sample_sheet_path
+        # Also look for count files in counts subdirectory
+        if not count_files:
+            count_pattern = os.path.join(input_dir, experiment_name, "counts", "**", "*.count")
+            count_files = glob.glob(count_pattern, recursive=True)
         
-        count_table = None
+        has_fastq = len(fastq_files) > 0
+        has_count_files = len(count_files) > 0
         
-        if has_fastq:
-            logging.info(f"Found {len(fastq_files)} fastq files")
-            # Process all samples
-            count_files = process_all_samples(
-                input_dir, 
-                library_file, 
-                base_exp_dir, 
-                sample_sheet=pd.read_csv(sample_sheet_path), 
-                overwrite=overwrite,
-                experiment_name=experiment_name
-            )
+        logging.info(f"Found {len(fastq_files)} FASTQ files and {len(count_files)} count files")
+        
+        # If both types exist, create separate experiment directories
+        if has_fastq and has_count_files:
+            logging.info(f"Found both FASTQ files and pre-processed count files. Creating separate analysis directories.")
             
-            # Merge count files into a single table - save directly in the experiment directory
-            count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
-            if count_table:
-                results["count_table"] = count_table
-                logging.info(f"Created merged count table: {count_table}")
-            else:
-                logging.error("Failed to create merged count table")
-                return {"error": "Failed to create merged count table"}
+            # Process FASTQ files
+            if has_fastq:
+                fastq_exp_name = f"{experiment_name}_FASTQ"
+                fastq_results = process_experiment_by_type(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    library_file=library_file,
+                    experiment_name=fastq_exp_name,
+                    contrasts_file=contrasts_file,
+                    contrasts=contrasts,
+                    norm_method=norm_method,
+                    sample_sheet=sample_sheet,
+                    overwrite=overwrite,
+                    skip_drugz=skip_drugz,
+                    skip_mle=skip_mle,
+                    use_docker=use_docker,
+                    data_type="fastq"
+                )
+                results["fastq_analysis"] = fastq_results
+            
+            # Process count files
+            if has_count_files:
+                count_exp_name = f"{experiment_name}_RC"
+                count_results = process_experiment_by_type(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    library_file=library_file,
+                    experiment_name=count_exp_name,
+                    contrasts_file=contrasts_file,
+                    contrasts=contrasts,
+                    norm_method=norm_method,
+                    sample_sheet=sample_sheet,
+                    overwrite=overwrite,
+                    skip_drugz=skip_drugz,
+                    skip_mle=skip_mle,
+                    use_docker=use_docker,
+                    data_type="count"
+                )
+                results["count_analysis"] = count_results
+            
+            return results
         else:
-            # Look for existing count tables
-            count_tables = glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True)
-            if count_tables:
-                count_table = count_tables[0]
-                # Copy the count table to the experiment directory
-                dest_path = os.path.join(base_exp_dir, f"{experiment_name}.count")
-                import shutil
-                shutil.copy(count_table, dest_path)
-                count_table = dest_path
-                results["count_table"] = count_table
-                logging.info(f"Using existing count table: {count_table}")
+            # Only one type exists, proceed with standard processing
+            # Create base experiment directory
+            base_exp_dir = os.path.join(output_dir, experiment_name)
+            os.makedirs(base_exp_dir, exist_ok=True)
+            
+            # Setup a single log file for the entire experiment
+            log_file = os.path.join(base_exp_dir, f"{experiment_name}.log")
+            setup_logging(log_file=log_file)
+            
+            # Log system information
+            log_system_info()
+            
+            logging.info(f"Starting pipeline for {experiment_name}")
+            logging.info(f"Input directory: {input_dir}")
+            logging.info(f"Output directory: {output_dir}")
+            logging.info(f"Library file: {library_file}")
+            
+            if contrasts_file:
+                logging.info(f"Contrasts file: {contrasts_file}")
+            
+            results["log_file"] = log_file
+            
+            # Generate sample sheet for the experiment
+            if sample_sheet is None:
+                sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
+                generate_sample_sheet(input_dir, base_exp_dir, experiment_name, experiment_name=experiment_name)
+                results["sample_sheet"] = sample_sheet_path
             else:
-                logging.error("No fastq files or count tables found")
-                return {"error": "No fastq files or count tables found"}
-        
-        # Run analysis for each contrast
-        if contrasts and count_table:
-            for contrast in contrasts:
-                logging.info(f"Processing contrast: {contrast}")
+                # Copy the user-provided sample sheet to the experiment directory
+                sample_sheet_path = os.path.join(base_exp_dir, f"{experiment_name}_samples.txt")
+                import shutil
+                shutil.copy(sample_sheet, sample_sheet_path)
+                results["sample_sheet"] = sample_sheet_path
+            
+            count_table = None
+            
+            if has_fastq:
+                logging.info(f"Found {len(fastq_files)} fastq files")
+                # Process all samples
+                count_files = process_all_samples(
+                    input_dir, 
+                    library_file, 
+                    base_exp_dir, 
+                    sample_sheet=pd.read_csv(sample_sheet_path), 
+                    overwrite=overwrite,
+                    experiment_name=experiment_name
+                )
                 
-                # Create a directory for this contrast
-                contrast_dir = os.path.join(base_exp_dir, contrast)
-                os.makedirs(contrast_dir, exist_ok=True)
+                # Merge count files into a single table - save directly in the experiment directory
+                count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
+                if count_table:
+                    results["count_table"] = count_table
+                    logging.info(f"Created merged count table: {count_table}")
+                else:
+                    logging.error("Failed to create merged count table")
+                    return {"error": "Failed to create merged count table"}
+            else:
+                # Look for existing count tables or CSV files
+                count_tables = glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True)
+                csv_tables = glob.glob(os.path.join(input_dir, '**/*.csv'), recursive=True)
                 
-                # Initialize results for this contrast
-                results["contrasts"][contrast] = {
-                    "dir": contrast_dir
-                }
-                
-                # Run RRA analysis
-                if contrasts_file:
-                    # Run RRA for this contrast
-                    rra_results = process_contrasts(
-                        contrasts_file=contrasts_file,
-                        count_table=count_table,  # Use the main count table
-                        output_dir=contrast_dir,   # Save directly in contrast directory
-                        norm_method=norm_method,
-                        overwrite=overwrite,
-                        target_contrast=contrast
-                    )
-                    
-                    # Convert RRA results to CSV
-                    if rra_results and contrast in rra_results and "gene_summary" in rra_results[contrast]:
-                        rra_csv = convert_results_to_csv(rra_results[contrast]["gene_summary"], "RRA")
-                        rra_results[contrast]["csv"] = rra_csv
-                    
-                    results["contrasts"][contrast]["rra_results"] = rra_results
-                
-                # Run MLE analysis if design matrix is available and not skipped
-                if not skip_mle:
-                    design_matrix = find_design_matrix(input_dir)
-                    
-                    if design_matrix:
-                        logging.info(f"Found design matrix: {design_matrix}")
+                # Filter and prioritize CSV tables that look like count data
+                count_related_csv = []
+                for csv_file in csv_tables:
+                    base_name = os.path.basename(csv_file).lower()
+                    if 'count' in base_name or 'read_count' in base_name or '_rc' in base_name:
+                        count_related_csv.append(csv_file)
                         
-                        # Run MLE analysis
-                        mle_results = process_mle_analysis(
+                # Log what we found
+                if count_related_csv:
+                    logging.info(f"Found {len(count_related_csv)} CSV files that appear to be count data")
+                    
+                if count_tables:
+                    count_table = count_tables[0]
+                    # Copy the count table to the experiment directory
+                    dest_path = os.path.join(base_exp_dir, f"{experiment_name}.count")
+                    import shutil
+                    shutil.copy(count_table, dest_path)
+                    count_table = dest_path
+                    results["count_table"] = count_table
+                    logging.info(f"Using existing count table: {count_table}")
+                elif count_related_csv:
+                    # Use the first count-related CSV file
+                    csv_file = count_related_csv[0]
+                    count_table = make_count_table(csv_file, base_exp_dir)
+                    results["count_table"] = count_table
+                    logging.info(f"Converted CSV to tab-delimited format: {count_table} (prioritized as count data)")
+                elif csv_tables:
+                    # If no count-specific CSV files found, use the first available CSV
+                    csv_file = csv_tables[0]
+                    count_table = make_count_table(csv_file, base_exp_dir)
+                    results["count_table"] = count_table
+                    logging.info(f"Converted CSV to tab-delimited format: {count_table} (using first available CSV)")
+                else:
+                    logging.error("No count tables or CSV files found")
+                    return {"error": "No count tables or CSV files found"}
+            
+            # Run analysis for each contrast
+            if contrasts and count_table:
+                for contrast in contrasts:
+                    logging.info(f"Processing contrast: {contrast}")
+                    
+                    # Create a directory for this contrast
+                    contrast_dir = os.path.join(base_exp_dir, contrast)
+                    os.makedirs(contrast_dir, exist_ok=True)
+                    
+                    # Initialize results for this contrast
+                    results["contrasts"][contrast] = {
+                        "dir": contrast_dir
+                    }
+                    
+                    # Run RRA analysis
+                    if contrasts_file:
+                        # Run RRA for this contrast
+                        rra_results = process_contrasts(
+                            contrasts_file=contrasts_file,
                             count_table=count_table,  # Use the main count table
-                            design_matrix=design_matrix,
                             output_dir=contrast_dir,   # Save directly in contrast directory
-                            contrast_name=contrast,
                             norm_method=norm_method,
-                            overwrite=overwrite
+                            overwrite=overwrite,
+                            target_contrast=contrast
                         )
                         
-                        # Convert MLE results to CSV
-                        if mle_results and "gene_summary" in mle_results:
-                            mle_csv = convert_results_to_csv(mle_results["gene_summary"], "MLE")
-                            mle_results["csv"] = mle_csv
+                        # Convert RRA results to CSV
+                        if rra_results and contrast in rra_results and "gene_summary" in rra_results[contrast]:
+                            rra_csv = convert_results_to_csv(rra_results[contrast]["gene_summary"], "RRA")
+                            rra_results[contrast]["csv"] = rra_csv
                         
-                        results["contrasts"][contrast]["mle_results"] = mle_results
-                    else:
-                        logging.warning(f"No design matrix found, skipping MLE analysis for {contrast}")
-                
-                # Run DrugZ analysis if requested
-                if not skip_drugz:
-                    logging.info(f"Running DrugZ analysis for {contrast}")
+                        results["contrasts"][contrast]["rra_results"] = rra_results
                     
-                    drugz_results = run_drugz_analysis(
-                        count_table=count_table,  # Use the main count table
-                        contrasts_file=contrasts_file,
-                        output_dir=contrast_dir,   # Save directly in contrast directory
-                        overwrite=overwrite,
-                        use_docker=use_docker,
-                        target_contrast=contrast
-                    )
+                    # Run MLE analysis if design matrix is available and not skipped
+                    if not skip_mle:
+                        design_matrix = find_design_matrix(input_dir)
+                        
+                        if design_matrix:
+                            logging.info(f"Found design matrix: {design_matrix}")
+                            
+                            # Run MLE analysis
+                            mle_results = process_mle_analysis(
+                                count_table=count_table,  # Use the main count table
+                                design_matrix=design_matrix,
+                                output_dir=contrast_dir,   # Save directly in contrast directory
+                                contrast_name=contrast,
+                                norm_method=norm_method,
+                                overwrite=overwrite
+                            )
+                            
+                            # Convert MLE results to CSV
+                            if mle_results and "gene_summary" in mle_results:
+                                mle_csv = convert_results_to_csv(mle_results["gene_summary"], "MLE")
+                                mle_results["csv"] = mle_csv
+                            
+                            results["contrasts"][contrast]["mle_results"] = mle_results
+                        else:
+                            logging.warning(f"No design matrix found, skipping MLE analysis for {contrast}")
                     
-                    # Convert DrugZ results to CSV
-                    if drugz_results and contrast in drugz_results and "drugz_scores" in drugz_results[contrast]:
-                        drugz_csv = convert_results_to_csv(drugz_results[contrast]["drugz_scores"], "DrugZ")
-                        drugz_results[contrast]["csv"] = drugz_csv
-                    
-                    results["contrasts"][contrast]["drugz_results"] = drugz_results
-        else:
-            logging.warning("No contrasts or count table available, skipping differential analysis")
-        
-        logging.info(f"Analysis pipeline for {experiment_name} completed successfully")
-        
-        return results
+                    # Run DrugZ analysis if requested
+                    if not skip_drugz:
+                        logging.info(f"Running DrugZ analysis for {contrast}")
+                        
+                        drugz_results = run_drugz_analysis(
+                            count_table=count_table,  # Use the main count table
+                            contrasts_file=contrasts_file,
+                            output_dir=contrast_dir,   # Save directly in contrast directory
+                            overwrite=overwrite,
+                            use_docker=use_docker,
+                            target_contrast=contrast
+                        )
+                        
+                        # Convert DrugZ results to CSV
+                        if drugz_results and contrast in drugz_results and "drugz_scores" in drugz_results[contrast]:
+                            drugz_csv = convert_results_to_csv(drugz_results[contrast]["drugz_scores"], "DrugZ")
+                            drugz_results[contrast]["csv"] = drugz_csv
+                        
+                        results["contrasts"][contrast]["drugz_results"] = drugz_results
+            else:
+                logging.warning("No contrasts or count table available, skipping differential analysis")
+            
+            logging.info(f"Analysis pipeline for {experiment_name} completed successfully")
+            
+            return results
 
 
 def main():
@@ -599,6 +664,7 @@ def main():
     parser.add_argument("--library-file", "-l", help="Path to library file (defaults to <input-dir>/<experiment-name>/library.csv)")
     parser.add_argument("--contrasts-file", "-c", help="Path to contrasts file (defaults to <input-dir>/<experiment-name>/contrasts.csv)")
     parser.add_argument("--sample-sheet", "-s", help="Path to sample sheet (will be generated if not provided)")
+    parser.add_argument("--count-file", help="Path to a count file (.count or .csv) to use directly instead of looking in input-dir")
     
     # Analysis options
     parser.add_argument("--norm-method", default=DEFAULT_NORM_METHOD, 
@@ -626,6 +692,26 @@ def main():
     # Default library and contrasts files within the experiment directory
     library_file = args.library_file or os.path.join(input_dir, args.experiment_name, "library.csv")
     contrasts_file = args.contrasts_file or os.path.join(input_dir, args.experiment_name, "contrasts.csv")
+    
+    # Handle count file if provided
+    count_file = None
+    if args.count_file:
+        if not os.path.exists(args.count_file):
+            print(f"Error: Count file not found at {args.count_file}")
+            return 1
+        
+        count_file = os.path.abspath(args.count_file)
+        print(f"Using provided count file: {count_file}")
+        
+        # If it's a CSV file, convert it to tab-delimited format
+        if count_file.endswith('.csv'):
+            try:
+                from analysis_pipeline.core.file_handling import make_count_table
+                count_file = make_count_table(count_file, output_dir)
+                print(f"Converted CSV count file to tab-delimited format: {count_file}")
+            except Exception as e:
+                print(f"Error converting CSV count file: {str(e)}")
+                return 1
     
     # Check if required files exist
     if not os.path.exists(library_file):
@@ -669,7 +755,7 @@ def main():
         skip_qc=args.skip_qc,
         skip_mle=args.skip_mle,
         use_docker=True,  # Always use Docker
-        verbose=args.verbose
+        count_file=count_file
     )
     
     if "error" in results:
