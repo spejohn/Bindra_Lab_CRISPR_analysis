@@ -1,0 +1,3 @@
+sgRNA	Gene	control1	control2	treatment1	treatment2
+sgRNA1	GeneA	10	15	5	8
+sgRNA2	GeneB	20	25	40	35

@@ -1,0 +1,3 @@
+sgRNA	Gene	Count
+sgRNA1	GeneA	10
+sgRNA2	GeneB	20

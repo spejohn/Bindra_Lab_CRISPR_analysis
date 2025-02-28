@@ -1,0 +1,21 @@
+# Default configuration for CRISPR Analysis Pipeline
+# Override these settings with --config parameter or by editing this file
+
+# Input/Output Settings
+input_dir: "input"             # Directory containing screen data
+output_dir: "crispr_analysis_pipeline_results"  # Directory for results
+experiment_name: "experiment"  # Default experiment name prefix
+
+# Analysis Settings
+norm_method: "median"          # Normalization method for MAGeCK
+fdr_threshold: 0.05            # FDR threshold for significant hits
+# Docker is always required and enabled by default
+
+# Resource Settings
+threads: 4                     # Number of threads to use
+memory_gb: 8                   # Memory to allocate (GB)
+
+# Optional Flags
+skip_drugz: false              # Skip DrugZ analysis
+skip_qc: false                 # Skip QC analysis
+skip_mle: false                # Skip MAGeCK MLE analysis 
