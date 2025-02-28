@@ -14,12 +14,159 @@ from analysis_pipeline.core.config import (
     CONTRAST_TABLE_PATTERN,
     READ_COUNT_PATTERN,
     FASTQ_PATTERNS,
-    COUNT_CSV_PATTERN
+    COUNT_CSV_PATTERN,
+    DESIGN_MATRIX_PATTERN,
+    CONTRAST_REQUIRED_COLUMNS
 )
 from analysis_pipeline.core.utils import retry_operation
 
 # Define patterns
 DESIGN_MATRIX_PATTERN = "*.txt"
+
+
+@retry_operation(max_attempts=3, delay=2, error_types=(IOError, pd.errors.EmptyDataError))
+def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = None) -> str:
+    """
+    Convert a CSV file to tab-delimited format for use with MAGeCK and DrugZ.
+    
+    For contrast tables specifically, this function handles duplicate column names
+    (e.g., multiple "control" or "treatment" columns) by joining their values with commas.
+    
+    Also cleans whitespace from all values to prevent errors during sample validation.
+    
+    Args:
+        file_path: Path to the CSV file to convert
+        output_dir: Optional directory to save the converted file in
+                    (default: same directory as input file)
+    
+    Returns:
+        Path to the converted tab-delimited file
+    
+    Raises:
+        ValueError: If the file is not a CSV or if required columns are missing
+        IOError: If there's an issue reading or writing the file
+        pd.errors.EmptyDataError: If the file is empty
+    """
+    try:
+        input_path = Path(file_path)
+        
+        # Check if the file exists and is a CSV
+        if not input_path.exists():
+            raise ValueError(f"Input file does not exist: {file_path}")
+        
+        if not input_path.suffix.lower() == '.csv':
+            raise ValueError(f"Input file is not a CSV file: {file_path}")
+        
+        # Determine the output path
+        if output_dir:
+            output_dir_path = Path(output_dir)
+            # Create the output directory if it doesn't exist
+            output_dir_path.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir_path / f"{input_path.stem}.txt"
+        else:
+            output_path = input_path.with_suffix('.txt')
+        
+        logging.info(f"Converting {file_path} to tab-delimited format")
+        
+        # Read the CSV file first with standard pandas to check column names
+        with open(file_path, 'r') as f:
+            header = f.readline().strip()
+        
+        # Check if there are duplicate column names (indicative of a contrast table with multiple samples)
+        column_names = header.split(',')
+        has_duplicate_columns = len(column_names) != len(set(column_names))
+        
+        # Special handling for contrast tables with duplicate columns
+        if has_duplicate_columns and any(col in CONTRAST_REQUIRED_COLUMNS for col in column_names):
+            logging.info(f"Detected contrast table with duplicate columns")
+            
+            # Read the raw CSV file
+            df_raw = pd.read_csv(file_path, header=0)
+            
+            # Group columns by name and join their values
+            unique_cols = []
+            new_data = {}
+            
+            for col in column_names:
+                if col not in unique_cols:
+                    unique_cols.append(col)
+            
+            # Create a new dataframe with consolidated columns
+            for col in unique_cols:
+                # Find all positions where this column name appears
+                positions = [i for i, name in enumerate(column_names) if name == col]
+                
+                if len(positions) > 1:
+                    # For duplicate columns, join the values with commas
+                    joined_values = []
+                    for row in range(len(df_raw)):
+                        row_values = []
+                        for pos in positions:
+                            value = df_raw.iloc[row, pos]
+                            if pd.notna(value) and value != '':
+                                # Clean whitespace from the value
+                                cleaned_value = str(value).strip()
+                                if cleaned_value:  # Only add non-empty values
+                                    row_values.append(cleaned_value)
+                        joined_values.append(','.join(row_values) if row_values else '')
+                    new_data[col] = joined_values
+                else:
+                    # For non-duplicate columns, just copy the values and clean whitespace
+                    values = df_raw.iloc[:, positions[0]].values
+                    new_data[col] = [str(val).strip() if pd.notna(val) else val for val in values]
+            
+            # Create the consolidated dataframe
+            df = pd.DataFrame(new_data)
+            
+            # Check if all required columns for contrast tables are present
+            missing_columns = [col for col in CONTRAST_REQUIRED_COLUMNS if col not in df.columns]
+            if missing_columns:
+                raise ValueError(
+                    f"Contrast table missing required columns: {', '.join(missing_columns)}. "
+                    f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}"
+                )
+            
+            logging.info(f"Consolidated duplicate columns in contrast table")
+        else:
+            # Standard processing for design matrices or other files without duplicate columns
+            df = pd.read_csv(file_path)
+            logging.info(f"Loaded {len(df)} rows from {file_path}")
+            
+            # Clean whitespace from all string values in the dataframe
+            for column in df.columns:
+                if df[column].dtype == 'object':  # Only process string/object columns
+                    df[column] = df[column].apply(lambda x: x.strip() if isinstance(x, str) else x)
+            
+            # For contrast tables, clean the comma-separated lists of samples
+            is_contrast_table = all(col in df.columns for col in CONTRAST_REQUIRED_COLUMNS)
+            if is_contrast_table:
+                logging.info(f"File appears to be a contrast table with columns: {', '.join(df.columns)}")
+                
+                # Clean whitespace from comma-separated values in control and treatment columns
+                for col in ['control', 'treatment']:
+                    if col in df.columns:
+                        df[col] = df[col].apply(lambda x: ','.join([s.strip() for s in str(x).split(',')]) if pd.notna(x) else x)
+                
+                # Check for required columns
+                missing_columns = [col for col in CONTRAST_REQUIRED_COLUMNS if col not in df.columns]
+                if missing_columns:
+                    raise ValueError(
+                        f"Contrast table missing required columns: {', '.join(missing_columns)}. "
+                        f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}"
+                    )
+            else:
+                # Assume it's a design matrix
+                logging.info(f"File appears to be a design matrix with columns: {', '.join(df.columns)}")
+        
+        # Save as tab-delimited
+        df.to_csv(output_path, sep='\t', index=False)
+        logging.info(f"Successfully saved tab-delimited file to {output_path}")
+        
+        return str(output_path)
+        
+    except Exception as e:
+        logging.error(f"Error converting {file_path} to tab-delimited format: {str(e)}")
+        raise
 
 
 @retry_operation(max_attempts=3, delay=2)

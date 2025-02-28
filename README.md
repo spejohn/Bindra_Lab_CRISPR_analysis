@@ -20,6 +20,7 @@ A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA an
 - **NEW: Enhanced Docker volume handling and path resolution**
 - **NEW: Improved parallel processing for both sample counting and contrast analysis**
 - **NEW: Code cleanup and consistent function naming**
+- **NEW: File format conversion utility for design matrices and contrast tables**
 
 ## Directory Structure
 
@@ -214,6 +215,7 @@ The pipeline still supports the following legacy input structures for backward c
      drug_vs_control,control1|control2,drug1|drug2
      knockout_vs_wildtype,wt1|wt2,ko1|ko2
      ```
+   - **Note**: The pipeline expects tab-delimited text files for analysis. Use the file conversion utility to convert CSV files to the required format.
 
 3. **Design Matrix (design_matrix.txt, optional)**:
    - Tab-delimited file for MLE analysis
@@ -226,12 +228,14 @@ The pipeline still supports the following legacy input structures for backward c
      drug1    1    1
      drug2    1    2
      ```
+   - **Note**: The pipeline expects tab-delimited text files for analysis. Use the file conversion utility to convert CSV files to the required format.
 
 ## Main Entrypoints
 
 - `pipeline.py` - Main pipeline script
 - `run_individual_sample.py` - Process a single sample (for parallelization)
 - `run_qc.py` - Standalone QC analysis
+- `convert_input_files.py` - Utility to convert CSV files to tab-delimited format
 
 ## Usage
 
@@ -408,6 +412,49 @@ Requirements for design matrix files:
 - Must be named following patterns like `design_matrix.txt`, `design.txt`, etc.
 - Must be in the same directory as the contrast table
 - Must follow the MAGeCK MLE design matrix format with columns for Sample and condition variables
+
+## Input File Formats
+
+### Contrast Table Format
+
+Contrast tables define pairwise comparisons between treatment and control groups and must follow this format:
+
+- **File type**: Tab-separated text file (`.txt`), not CSV
+- **Required columns**: `contrast`, `control`, `treatment` (tab-separated)
+- **Multiple sample format**: Comma-separated (e.g., `sample1,sample2`) within each column
+- **Example**:
+  ```
+  contrast	control	treatment
+  test_contrast	control1,control2	treatment1,treatment2
+  ```
+
+This format is used by both standard MAGeCK analysis and DrugZ analysis. The file must be tab-delimited with each column separated by a tab character, not a comma.
+
+### Design Matrix Format
+
+Design matrices are used specifically by MAGeCK MLE for more complex experimental designs:
+
+- **File type**: Tab-separated text file (`.txt`)
+- **Required format**: A column named `Sample` followed by condition columns
+- **Each row**: Represents one sample and its associated condition values
+- **No sample grouping**: Unlike contrast tables, each sample gets its own row
+- **Example**:
+  ```
+  Sample	condition
+  control1	control
+  control2	control
+  treatment1	treatment
+  treatment2	treatment
+  ```
+
+The design matrix allows MAGeCK to model more complex experimental variables beyond simple treatment vs. control comparisons.
+
+### File Naming Requirements
+
+- **Contrast tables**: Should be named following patterns like `contrasts.txt`, `contrast_table.txt`
+- **Design matrices**: Should be named following patterns like `design_matrix.txt`, `design.txt`
+
+These files should be placed in the experiment's input directory for automatic detection by the pipeline.
 
 ## Multi-Screen Analysis
 
@@ -678,3 +725,22 @@ The codebase has been cleaned up to improve maintainability:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Utilities
+
+### File Format Conversion
+
+The pipeline includes a utility script to convert CSV-formatted design matrices and contrast tables to the tab-delimited format required by MAGeCK and DrugZ:
+
+```bash
+# Convert a single file
+python convert_input_files.py --file /path/to/your/design_matrix.csv
+
+# Convert all files in a directory
+python convert_input_files.py --dir /path/to/your/input_directory
+
+# Specify an output directory
+python convert_input_files.py --file /path/to/your/contrast_table.csv --output /path/to/output/directory
+```
+
+For more information, see the [File Conversion Utility Documentation](README_file_conversion.md).
