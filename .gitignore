@@ -57,4 +57,20 @@ htmlcov/
 .cursor/
 
 # Temporary integration test directories
-crispr_test_*/ 
+crispr_test_*/
+
+# Test output directory
+test_output/
+
+# Development installation
+*.egg-info/
+*.egg
+
+# Testing scripts (optional, only if you don't want these in version control)
+# test_direct_pipeline.py
+# run_snakemake_test.py
+
+# Other potential test artifacts
+.coverage
+coverage.xml
+*.cover 
