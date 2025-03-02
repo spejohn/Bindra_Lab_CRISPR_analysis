@@ -29,6 +29,7 @@ setup(
             'run_snakemake=analysis_pipeline.run_snakemake:main',
             'run_qc_analysis=analysis_pipeline.run_qc_analysis:main',
             'run_multiple_screens=analysis_pipeline.run_multiple_screens:main',
+            'convert_input_files=analysis_pipeline.convert_input_files:main',
         ],
     },
 ) 
