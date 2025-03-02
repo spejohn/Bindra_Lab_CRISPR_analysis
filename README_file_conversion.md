@@ -203,4 +203,66 @@ All converted files will be saved with a `.txt` extension. The script will creat
 The script logs all actions to the console, including:
 - Number of files found
 - Conversion successes and failures
-- Final conversion summary 
+- Final conversion summary
+
+## Pipeline Input Requirements
+
+The CRISPR Analysis Pipeline handles different types of input data, which affects the required files:
+
+### When Starting with FASTQ Files
+
+If you have a `fastq` subdirectory in your experiment directory:
+
+- **Library file is REQUIRED** in the experiment directory
+- The pipeline needs the library file to map sgRNA sequences to genes
+- The utility will convert your design matrix and contrast table files
+
+Example directory structure:
+```
+experiment_dir/
+  ├── fastq/
+  │   ├── Sample1_R1.fastq.gz
+  │   ├── Sample1_R2.fastq.gz  # For paired-end data
+  │   └── ...
+  ├── library.csv          # REQUIRED for FASTQ processing
+  ├── design_matrix.csv    # Will be converted to .txt
+  └── contrast_table.csv   # Will be converted to .txt
+```
+
+### When Starting with Count Files
+
+If you have a `counts` subdirectory in your experiment directory:
+
+- **Library file is NOT required** as the sgRNA-to-gene mapping has already been done
+- The utility will still convert your design matrix and contrast table files
+
+Example directory structure:
+```
+experiment_dir/
+  ├── counts/
+  │   ├── count_table.csv
+  │   └── ...
+  ├── design_matrix.csv    # Will be converted to .txt
+  └── contrast_table.csv   # Will be converted to .txt
+```
+
+### Mixed Input Directories
+
+For directories containing both FASTQ and count files:
+
+- **Library file is required** as the FASTQ files need to be processed
+- The pipeline will use the appropriate input type for each sample
+
+Example directory structure:
+```
+experiment_dir/
+  ├── fastq/
+  │   ├── Sample1_R1.fastq.gz
+  │   └── ...
+  ├── counts/
+  │   ├── Sample2.count
+  │   └── ...
+  ├── library.csv        # REQUIRED for processing FASTQ files
+  ├── design_matrix.csv  # Will be converted to .txt
+  └── contrast_table.csv # Will be converted to .txt
+``` 

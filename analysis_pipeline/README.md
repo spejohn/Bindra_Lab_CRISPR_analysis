@@ -104,6 +104,22 @@ When processing both FASTQ and count files, separate experiment directories are 
 
 ## Input Directory Structure
 
+The pipeline supports multiple input directory structures, depending on your data type and analysis needs.
+
+### File Requirements by Input Type
+
+#### When Starting with FASTQ Files:
+- **Library file is required** - Used to map sgRNA sequences to genes
+- Contrast table - Defines the experimental comparisons
+- Design matrix (optional) - For MAGeCK MLE analysis
+
+#### When Starting with Count Files:
+- **Library file is NOT required** - Mapping has already been completed
+- Contrast table - Defines the experimental comparisons
+- Design matrix (optional) - For MAGeCK MLE analysis
+
+### Directory Structure Options
+
 The pipeline now supports a more organized input structure with experiment-specific subdirectories:
 
 ```
@@ -242,6 +258,12 @@ The simplest way to run the pipeline is using the Snakemake runner:
 ```bash
 python analysis_pipeline/run_snakemake.py /path/to/screens_directory
 ```
+
+The runner automatically:
+- Detects experiment directories
+- Identifies input types (FASTQ files, count files, or both)
+- Adjusts requirements based on input (e.g., library file is only required for FASTQ processing)
+- Runs appropriate analysis steps for each experiment
 
 Additional options:
 - `-o, --output-dir`: Set custom output directory (default: same level as input directory, named "crispr_analysis_pipeline_results")
@@ -578,6 +600,24 @@ python analysis_pipeline/run_snakemake.py /path/to/screens_directory -o /path/to
 - **Workflow visualization**: Generate DAG visualizations of your workflow
 - **Reproducibility**: Ensures the same steps are run in the same order
 
+### Input Requirements for Snakemake
+
+The workflow automatically detects the type of input in each experiment directory and adjusts its requirements accordingly:
+
+1. **For experiments with FASTQ files**:
+   - **Library file is REQUIRED** - The `library.csv` file must be present in the experiment directory
+   - The workflow will run the complete pipeline including the counting step
+
+2. **For experiments with count files only**:
+   - **Library file is NOT required** - The workflow will skip the counting step
+   - The workflow will proceed directly to MAGeCK test and DrugZ analysis
+
+3. **For experiments with both FASTQ and count files**:
+   - **Library file is REQUIRED** for processing the FASTQ files
+   - The workflow will run the appropriate steps for each input type
+
+For detailed directory structure examples, see the [Input Directory Structure](#input-directory-structure) section.
+
 ### Configuration
 
 The workflow can be configured using a `config.yaml` file or command-line parameters:
@@ -678,3 +718,39 @@ The codebase has been cleaned up to improve maintainability:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Working with Paired-End Reads
+
+The pipeline supports paired-end sequencing data, which is common in many CRISPR screening experiments:
+
+### How Paired-End Reads Are Processed
+
+1. **FASTQ File Naming**:
+   - The pipeline identifies paired files based on naming conventions
+   - Forward reads typically end with `_R1.fastq.gz` (or similar)
+   - Reverse reads typically end with `_R2.fastq.gz` (or similar)
+   - Example: `Sample1_R1.fastq.gz` and `Sample1_R2.fastq.gz`
+
+2. **In Design Matrices and Contrast Tables**:
+   - Include only the sample name (without the `_R1`/`_R2` suffix)
+   - The pipeline will automatically find and process both read files together
+   - Multiple replicates of the same condition should be listed separately in the design matrix
+
+### Example Design Matrix for Paired-End Data
+
+```
+Sample,Treatment,Control
+Control_Rep1,0,1
+Control_Rep2,0,1
+Treatment_Rep1,1,0
+Treatment_Rep2,1,0
+```
+
+### Example Contrast Table for Paired-End Data
+
+```
+contrast,treatment,control
+experiment1,Treatment_Rep1,Treatment_Rep2,Control_Rep1,Control_Rep2
+```
+
+Note that in the contrast table, multiple replicates of the same condition are comma-separated in the treatment or control column.
