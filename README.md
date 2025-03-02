@@ -116,6 +116,7 @@ The pipeline supports multiple input directory structures, depending on your dat
 
 #### When Starting with Count Files:
 - **Library file is NOT required** - Mapping has already been completed
+- The pipeline now explicitly checks for FASTQ files and only requires a library file when they are present
 - Contrast table - Defines the experimental comparisons
 - Design matrix (optional) - For MAGeCK MLE analysis
 
