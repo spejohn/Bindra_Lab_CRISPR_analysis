@@ -402,7 +402,8 @@ def process_all_samples(
 def merge_count_files(
     count_files: Dict[str, str],
     output_dir: str,
-    contrast_name: str = "contrast"
+    contrast_name: str = "contrast",
+    from_fastq: bool = True  # New parameter to indicate if count files were generated from FASTQ
 ) -> Optional[str]:
     """
     Merge multiple count files into a single count table.
@@ -411,6 +412,7 @@ def merge_count_files(
         count_files: Dictionary mapping sample names to count file paths
         output_dir: Directory to save the merged file
         contrast_name: Name of the contrast (used for file naming)
+        from_fastq: Whether these count files were generated from FASTQ files (adds "_fastq" suffix)
         
     Returns:
         Path to the merged count file or None if failed
@@ -450,23 +452,66 @@ def merge_count_files(
         for sample_data in merged_data.values():
             all_sgrnas.update(sample_data.keys())
         
-        logging.info(f"Found {len(all_sgrnas)} unique sgRNAs across all samples")
+        # Create a DataFrame with all sgRNAs
+        merged_df = pd.DataFrame({'sgRNA': list(all_sgrnas)})
         
-        # Create a DataFrame with all sgRNAs and counts
-        data = {'sgRNA': sorted(all_sgrnas)}
+        # Add a gene column if available in the first file
+        try:
+            first_file = list(count_files.values())[0]
+            first_df = pd.read_csv(first_file, sep='\t')
+            if 'Gene' in first_df.columns:
+                # Create a mapping from sgRNA to Gene
+                gene_map = dict(zip(first_df['sgRNA'], first_df['Gene']))
+                # Add Gene column using the mapping
+                merged_df['Gene'] = merged_df['sgRNA'].map(gene_map)
+            else:
+                # Add an empty Gene column
+                merged_df['Gene'] = ''
+        except Exception as e:
+            logging.error(f"Error extracting gene information: {e}")
+            # Add an empty Gene column
+            merged_df['Gene'] = ''
         
-        for sample in sorted(merged_data.keys()):
-            sample_counts = merged_data[sample]
-            data[sample] = [sample_counts.get(sgrna, 0) for sgrna in data['sgRNA']]
+        # Add a count column for each sample
+        for sample, sample_data in merged_data.items():
+            merged_df[sample] = merged_df['sgRNA'].map(sample_data).fillna(0).astype(int)
         
-        # Create merged DataFrame
-        merged_df = pd.DataFrame(data)
+        # Ensure the output directory exists
+        os.makedirs(output_dir, exist_ok=True)
         
-        # Save the merged count file directly in the experiment directory
-        output_file = os.path.join(output_dir, f"{contrast_name}.count")
-        merged_df.to_csv(output_file, sep='\t', index=False)
+        # Determine the output filename based on source type
+        if from_fastq:
+            # For FASTQ-derived files, create both formats
+            csv_output_file = os.path.join(output_dir, f"{contrast_name}.fastq_counts.csv")
+            tab_output_file = os.path.join(output_dir, f"{contrast_name}.fastq_counts.txt")
+            
+            # Save as CSV (for human readability)
+            merged_df.to_csv(csv_output_file, index=False)
+            # Save as tab-delimited (for algorithm compatibility)
+            merged_df.to_csv(tab_output_file, sep='\t', index=False)
+            
+            logging.info(f"Merged count table saved as CSV: {csv_output_file}")
+            logging.info(f"Merged count table saved as tab-delimited: {tab_output_file}")
+            
+            # Return the tab-delimited file path as the primary output for algorithms
+            output_file = tab_output_file
+        else:
+            # For non-FASTQ files, create both formats
+            csv_output_file = os.path.join(output_dir, f"{contrast_name}.counts.csv")
+            tab_output_file = os.path.join(output_dir, f"{contrast_name}.count")
+            
+            # Save as CSV (for human readability)
+            merged_df.to_csv(csv_output_file, index=False)
+            # Save as tab-delimited (for algorithm compatibility)
+            merged_df.to_csv(tab_output_file, sep='\t', index=False)
+            
+            logging.info(f"Merged count table saved as CSV: {csv_output_file}")
+            logging.info(f"Merged count table saved as tab-delimited: {tab_output_file}")
+            
+            # Return the tab-delimited file path as the primary output for algorithms
+            output_file = tab_output_file
         
-        logging.info(f"Merged count file saved to {output_file}")
+        logging.info(f"Primary output file for algorithms: {output_file}")
         
         return output_file
         

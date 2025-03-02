@@ -1060,10 +1060,10 @@ def main():
     # Input/output options
     parser.add_argument("--input-dir", "-i", required=True, help="Directory containing input files or experiment directories")
     parser.add_argument("--output-dir", "-o", required=True, help="Directory for output files")
-    parser.add_argument("--experiment-name", "-e", default="experiment", 
-                        help="Name of the experiment; corresponds to a subdirectory in input-dir")
-    parser.add_argument("--library-file", "-l", help="Path to library file (defaults to <input-dir>/<experiment-name>/library.csv)")
-    parser.add_argument("--contrasts-file", "-c", help="Path to contrasts file (defaults to <input-dir>/<experiment-name>/contrasts.csv)")
+    parser.add_argument("--experiment-name", "-e", default=None, 
+                        help="Name of the experiment (optional, defaults to input directory's basename)")
+    parser.add_argument("--library-file", "-l", help="Path to library file (defaults to <input-dir>/library.csv)")
+    parser.add_argument("--contrasts-file", "-c", help="Path to contrasts file (defaults to <input-dir>/contrasts.csv)")
     parser.add_argument("--sample-sheet", "-s", help="Path to sample sheet (will be generated if not provided)")
     parser.add_argument("--count-file", help="Path to a count file (.count or .csv) to use directly instead of looking in input-dir")
     
@@ -1088,6 +1088,11 @@ def main():
     # Create absolute paths
     input_dir = os.path.abspath(args.input_dir)
     output_dir = os.path.abspath(args.output_dir)
+    
+    # Auto-derive experiment name from input directory if not provided
+    if args.experiment_name is None:
+        args.experiment_name = os.path.basename(os.path.normpath(input_dir))
+        print(f"Auto-detected experiment name from directory: {args.experiment_name}")
     
     # Import progress reporter
     from analysis_pipeline.core.logging_setup import ProgressReporter
@@ -1124,8 +1129,8 @@ def main():
     progress.update("Initialization", "Setting up pipeline")
     
     # Default library and contrasts files within the experiment directory
-    library_file = args.library_file or os.path.join(input_dir, args.experiment_name, "library.csv")
-    contrasts_file = args.contrasts_file or os.path.join(input_dir, args.experiment_name, "contrasts.csv")
+    library_file = args.library_file or os.path.join(input_dir, "library.csv")
+    contrasts_file = args.contrasts_file or os.path.join(input_dir, "contrasts.csv")
     
     progress.update("Input Validation", "Checking input files")
     

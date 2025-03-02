@@ -207,17 +207,34 @@ The pipeline supports multiple input directory structures, depending on your dat
 
 ## Usage
 
-### Snakemake Runner
+### Command Types and Parameter Requirements
 
-The simplest way to run the pipeline is using the Snakemake runner:
+The pipeline offers two types of commands:
+
+1. **High-Level "Run Everything" Commands** - Automatically detect as much as possible:
+   - `run_snakemake.py` - Just point to a directory, everything is auto-detected
+   - `pipeline.py` (with no specific selections) - Auto-detects experiment names, contrasts, etc.
+
+2. **Targeted/Specific Commands** - Require explicit selection parameters:
+   - `run_individual_sample.py` - Needs explicit sample selection
+   - Analysis variant commands - For specialized processing
+
+### Snakemake Runner (Recommended)
+
+The simplest way to run the pipeline is using the Snakemake runner, which automatically detects everything:
 
 ```bash
+# Most basic form - just point to your screens directory
 python analysis_pipeline/run_snakemake.py /path/to/screens_directory
+
+# Optionally specify output directory and cores
+python analysis_pipeline/run_snakemake.py /path/to/screens_directory -o /path/to/output -j 8
 ```
 
 The runner automatically:
-- Detects experiment directories
+- Detects experiment directories (no need to specify experiment names)
 - Identifies input types (FASTQ files, count files, or both)
+- Locates contrast files and library files
 - Adjusts requirements based on input (e.g., library file is only required for FASTQ processing)
 - Runs appropriate analysis steps for each experiment
 
@@ -250,24 +267,43 @@ This is particularly useful for HPC environments where you may want to use all a
 
 The pipeline automatically handles workflow locks, ensuring you can rerun the analysis anytime without worrying about lockfile errors that commonly occur if a previous run was interrupted.
 
+### Standard Pipeline Usage
+
 ```bash
-# Run full pipeline
-python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment
+# Most basic form - processes everything in specified directory
+# (folder name is used as experiment name, files auto-detected)
+python pipeline.py --input-dir /path/to/experiment_dir
 
-# Run pipeline with specific contrasts file
-python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --contrasts-file /path/to/contrasts.csv --experiment-name my_experiment
+# Specify output directory (input directory name still used as experiment name)
+python pipeline.py --input-dir /path/to/experiment_dir --output-dir /path/to/output
 
-# Run pipeline without DrugZ analysis
-python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment --skip-drugz
+# Override auto-detection with explicit experiment name
+python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --experiment-name my_experiment
 
-# Run pipeline without MLE analysis
-python pipeline.py --input-dir /path/to/input --output-dir /path/to/output --library-file /path/to/library.csv --experiment-name my_experiment --skip-mle
+# Specify a non-default contrasts file
+python pipeline.py --input-dir /path/to/input --contrasts-file /path/to/custom/contrasts.csv
 
-# Process individual sample
+# Skip certain analysis types
+python pipeline.py --input-dir /path/to/input --skip-drugz
+python pipeline.py --input-dir /path/to/input --skip-mle
+
+# Custom library file location (only needed if not in standard location)
+python pipeline.py --input-dir /path/to/input --library-file /path/to/custom/location/library.csv
+```
+
+### Targeted Command Usage
+
+For specific operations, use more detailed parameters:
+
+```bash
+# Process individual sample (requires explicit file paths)
 python run_individual_sample.py --fastq /path/to/sample.fastq --library-file /path/to/library.csv --output-dir /path/to/output
 
-# Run QC on existing results
+# Run QC on existing results (requires specific input/output)
 python run_qc.py --input /path/to/results --output /path/to/qc_output
+
+# Run multiple specific screens (requires directory path)
+python run_multiple_screens.py /path/to/screens_directory
 ```
 
 ### Example Workflow for Dual Input Types
@@ -275,7 +311,14 @@ python run_qc.py --input /path/to/results --output /path/to/qc_output
 If you have both FASTQ files and pre-processed count files in your input directory:
 
 ```bash
-python pipeline.py --input-dir /path/to/mixed_input --output-dir /path/to/results --library-file /path/to/library.csv --experiment-name my_experiment
+# Auto-detection approach (recommended)
+python pipeline.py --input-dir /path/to/mixed_input
+
+# With explicit output directory
+python pipeline.py --input-dir /path/to/mixed_input --output-dir /path/to/results
+
+# With explicit experiment name (optional override)
+python pipeline.py --input-dir /path/to/mixed_input --output-dir /path/to/results --experiment-name my_experiment
 ```
 
 This will:
@@ -286,17 +329,29 @@ This will:
 3. Run the full analysis pipeline on both data types independently
 4. Maintain separate log files and results for each analysis
 
+### File Detection and Error Handling
+
+The pipeline automatically looks for required files in standard locations:
+- `library.csv`: Required only when processing FASTQ files
+- `contrasts.csv`: Required for all analyses
+- `design_matrix.txt`: Optional, used for MLE analysis if present
+
+If required files are missing, the pipeline will:
+- Display a clear error message explaining which file is missing
+- Indicate whether the file is required based on the detected input types
+- Exit gracefully without starting the analysis
+
 ### Example Workflow
 
 1. **Prepare your input files**:
    - Place your FASTQ files in the input directory or ensure count files are organized
-   - Create a library.csv file with guide information
+   - Create a library.csv file with guide information (required only for FASTQ processing)
    - Create a contrasts.csv file to define your experimental contrasts
    - (Optional) Create a design_matrix.txt for MLE analysis
 
-2. **Run the pipeline**:
+2. **Run the pipeline** (simple auto-detect approach):
    ```bash
-   python pipeline.py --input-dir /path/to/fastq_dir --output-dir /path/to/results --library-file /path/to/library.csv --experiment-name my_experiment
+   python pipeline.py --input-dir /path/to/experiment_dir
    ```
 
 3. **Analyze the results**:

@@ -8,7 +8,7 @@ import logging
 import shutil
 import pandas as pd
 from pathlib import Path
-from typing import Set, List, Dict, Any, Optional, Union
+from typing import Set, List, Dict, Any, Optional, Union, Tuple
 
 from analysis_pipeline.core.config import (
     CONTRAST_TABLE_PATTERN,
@@ -112,6 +112,74 @@ def reverse_dir(input_dir: str, root: str, output_dir: str) -> Path:
         return fallback_path
 
 
+@retry_operation(max_attempts=3, delay=2)
+def ensure_count_formats(count_file_path: str, output_dir: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Ensures that a count file exists in both CSV and tab-delimited formats.
+    If given a CSV, creates a tab-delimited version.
+    If given a tab-delimited file, creates a CSV version.
+    
+    Args:
+        count_file_path: Path to the count file (either CSV or tab-delimited)
+        output_dir: Optional output directory (defaults to same as count_file_path)
+        
+    Returns:
+        Tuple of (csv_file_path, tab_file_path)
+    """
+    try:
+        file_path = Path(count_file_path)
+        out_dir = Path(output_dir) if output_dir else file_path.parent
+        
+        # Ensure output directory exists
+        os.makedirs(out_dir, exist_ok=True)
+        
+        # Determine the file type and create the other format
+        if file_path.name.lower().endswith('.csv'):
+            # This is a CSV file - create tab-delimited version
+            csv_file_path = str(file_path)
+            # Load the CSV file
+            data = pd.read_csv(file_path)
+            
+            # Create the tab-delimited filename
+            if '.counts.csv' in file_path.name.lower():
+                tab_file_path = str(out_dir / file_path.name.replace('.counts.csv', '.counts.txt'))
+            elif '.fastq_counts.csv' in file_path.name.lower():
+                tab_file_path = str(out_dir / file_path.name.replace('.fastq_counts.csv', '.fastq_counts.txt'))
+            else:
+                tab_file_path = str(out_dir / file_path.name.replace('.csv', '.count'))
+            
+            # Save as tab-delimited
+            data.to_csv(tab_file_path, sep="\t", index=False)
+            logging.info(f"Created tab-delimited version of count file: {tab_file_path}")
+            
+        else:
+            # This is a tab-delimited file - create CSV version
+            tab_file_path = str(file_path)
+            # Load the tab-delimited file
+            data = pd.read_csv(file_path, sep='\t')
+            
+            # Create the CSV filename
+            if '.counts.txt' in file_path.name.lower():
+                csv_file_path = str(out_dir / file_path.name.replace('.counts.txt', '.counts.csv'))
+            elif '.fastq_counts.txt' in file_path.name.lower():
+                csv_file_path = str(out_dir / file_path.name.replace('.fastq_counts.txt', '.fastq_counts.csv'))
+            elif file_path.name.lower().endswith('.count'):
+                csv_file_path = str(out_dir / f"{file_path.stem}.counts.csv")
+            else:
+                csv_file_path = str(out_dir / f"{file_path.stem}.csv")
+            
+            # Save as CSV
+            data.to_csv(csv_file_path, index=False)
+            logging.info(f"Created CSV version of count file: {csv_file_path}")
+        
+        return (csv_file_path, tab_file_path)
+        
+    except Exception as e:
+        logging.error(f"Error ensuring count formats for {count_file_path}: {str(e)}")
+        # Return the original file for both formats as a fallback
+        return (str(count_file_path), str(count_file_path))
+
+
 def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     """
     Scan the input directory for FASTQ files and read count tables.
@@ -164,9 +232,48 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
         input_files['design_matrix'] = str(design_files[0])
         logging.info(f"Found design matrix: {input_files['design_matrix']}")
     
-    # Targeted search in standard directories first (more efficient)
+    # Look for count files directly in the input directory
+    cnttbl_path = input_files.get('contrast_file')
+    design_path = input_files.get('design_matrix')
+    
+    # First, check for count files directly in the input directory
+    # This is the new recommended location for count files
+    logging.info(f"Checking for count files directly in {input_path}")
+    
+    # Find read count files (RC files)
+    rc_files = list(input_path.glob(READ_COUNT_PATTERN))
+    
+    # Also look for .counts files explicitly
+    counts_files = list(input_path.glob("*.counts"))
+    
+    # Also look for CSV files that match our count patterns
+    csv_count_files = []
+    for pattern in COUNT_CSV_PATTERN:
+        csv_count_files.extend(list(input_path.glob(pattern)))
+    
+    # Combine all types of count files
+    all_count_files = rc_files + counts_files + csv_count_files
+    
+    if all_count_files and cnttbl_path:
+        # Process each count file
+        for count_file in all_count_files:
+            count_path = str(count_file)
+            
+            # Ensure the file exists in both CSV and tab-delimited formats
+            csv_path, tab_path = ensure_count_formats(count_path)
+            
+            # Use the tab-delimited version for analysis
+            input_files['read_counts'][tab_path] = {
+                'contrast_table': cnttbl_path,
+                'design_matrix': design_path,
+                'csv_path': csv_path  # Store the CSV path for reference
+            }
+        
+        logging.info(f"Found {len(all_count_files)} count files directly in {input_path}")
+    
+    # Targeted search in standard directories as fallback (for compatibility)
     standard_dirs = ["fastq", "counts", "read_count", "rc"]
-    possible_data_dirs = [input_path]
+    possible_data_dirs = []
     
     # Add standard directories to search paths
     for dir_name in standard_dirs:
@@ -174,28 +281,32 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
         if standard_dir.exists():
             possible_data_dirs.append(standard_dir)
     
-    # Process standard directories first
-    for dir_path in possible_data_dirs:
-        if not dir_path.exists():
-            continue
+    # Process standard directories if no count files found directly
+    if len(input_files['read_counts']) == 0:
+        for dir_path in possible_data_dirs:
+            if not dir_path.exists():
+                continue
+                
+            logging.info(f"Scanning directory: {dir_path}")
             
-        logging.info(f"Scanning directory: {dir_path}")
-        
-        # Find the contrast table (if any) in this directory
-        cnttbl_files = list(dir_path.glob(CONTRAST_TABLE_PATTERN))
-        cnttbl_path = str(cnttbl_files[0]) if cnttbl_files else input_files.get('contrast_file')
-        
-        # Find the design matrix (if any) in this directory
-        design_files = list(dir_path.glob(DESIGN_MATRIX_PATTERN))
-        design_path = str(design_files[0]) if design_files else input_files.get('design_matrix')
-        
-        # Process potential count files in this directory
-        if "read_count" in str(dir_path).lower() or "_rc" in str(dir_path).lower() or any(f.name.lower().endswith('.count') for f in dir_path.iterdir() if f.is_file()):
-            process_count_directory(dir_path, cnttbl_path, design_path, input_files)
-        
-        # Check if this is a FASTQ directory
-        elif "fastq" in str(dir_path).lower():
-            process_fastq_directory(dir_path, cnttbl_path, design_path, input_files)
+            # Find the contrast table (if any) in this directory
+            cnttbl_files = list(dir_path.glob(CONTRAST_TABLE_PATTERN))
+            cnttbl_path = str(cnttbl_files[0]) if cnttbl_files else input_files.get('contrast_file')
+            
+            # Find the design matrix (if any) in this directory
+            design_files = list(dir_path.glob(DESIGN_MATRIX_PATTERN))
+            design_path = str(design_files[0]) if design_files else input_files.get('design_matrix')
+            
+            # Process potential count files in this directory
+            if ("read_count" in str(dir_path).lower() or 
+                "_rc" in str(dir_path).lower() or 
+                "counts" in str(dir_path).lower() or
+                any(f.name.lower().endswith(('.count', '.counts')) for f in dir_path.iterdir() if f.is_file())):
+                process_count_directory(dir_path, cnttbl_path, design_path, input_files)
+            
+            # Check if this is a FASTQ directory
+            elif "fastq" in str(dir_path).lower():
+                process_fastq_directory(dir_path, cnttbl_path, design_path, input_files)
     
     # If we found very few files, do a full recursive search as fallback
     if len(input_files['read_counts']) == 0 and len(input_files['fastq_dirs']) == 0:
@@ -216,7 +327,10 @@ def find_input_files(input_dir: str, experiment_name: Optional[str] = None) -> D
             design_path = str(root_path / design_files[0]) if design_files else input_files.get('design_matrix')
             
             # Check if this is a read count directory
-            if "read_count" in root.lower() or "_rc" in root.lower() or any(f.lower().endswith('.count') for f in files):
+            if ("read_count" in root.lower() or 
+                "_rc" in root.lower() or 
+                "counts" in root.lower() or
+                any(f.lower().endswith(('.count', '.counts')) for f in files)):
                 process_count_directory(root_path, cnttbl_path, design_path, input_files)
             
             # Check if this is a FASTQ directory
@@ -238,31 +352,30 @@ def process_count_directory(dir_path: Path, cnttbl_path: Optional[str], design_p
     # Find read count files (RC files)
     rc_files = list(dir_path.glob(READ_COUNT_PATTERN))
     
+    # Also look for .counts files explicitly
+    counts_files = list(dir_path.glob("*.counts"))
+    
     # Also look for CSV files that match our count patterns
     csv_count_files = []
     for pattern in COUNT_CSV_PATTERN:
         csv_count_files.extend(list(dir_path.glob(pattern)))
     
-    # Combine both types of count files
-    all_count_files = rc_files + csv_count_files
+    # Combine all types of count files
+    all_count_files = rc_files + counts_files + csv_count_files
     
     if all_count_files and cnttbl_path:
         # Process each count file
         for count_file in all_count_files:
             count_path = str(count_file)
             
-            # Convert CSV to tab-delimited if needed
-            if count_file.name.lower().endswith('.csv'):
-                try:
-                    count_path = make_count_table(count_path)
-                    logging.info(f"Converted CSV count file to tab-delimited: {count_path}")
-                except Exception as e:
-                    logging.error(f"Error converting CSV count file {count_path}: {str(e)}")
-                    continue
+            # Ensure the file exists in both CSV and tab-delimited formats
+            csv_path, tab_path = ensure_count_formats(count_path)
             
-            input_files['read_counts'][count_path] = {
+            # Use the tab-delimited version for analysis
+            input_files['read_counts'][tab_path] = {
                 'contrast_table': cnttbl_path,
-                'design_matrix': design_path
+                'design_matrix': design_path,
+                'csv_path': csv_path  # Store the CSV path for reference
             }
         
         logging.info(f"Found {len(all_count_files)} count files in {dir_path}")

@@ -21,7 +21,8 @@ from analysis_pipeline.core.config import (
     DEFAULT_NORM_METHOD,
     DEFAULT_ADJUST_METHOD,
     DEFAULT_FDR_THRESHOLD,
-    DEFAULT_ESSENTIAL_GENES
+    DEFAULT_ESSENTIAL_GENES,
+    COUNT_CSV_PATTERN
 )
 from analysis_pipeline.core.logging_setup import setup_logging, log_system_info, log_input_parameters, ProgressReporter
 from analysis_pipeline.core.file_handling import (
@@ -31,7 +32,8 @@ from analysis_pipeline.core.file_handling import (
     create_experiment_dirs,
     convert_results_to_csv,
     make_count_table,
-    copy_file
+    copy_file,
+    ensure_count_formats
 )
 from analysis_pipeline.core.validation import (
     validate_library_file,
@@ -165,10 +167,10 @@ def process_experiment_by_type(
         )
         
         # Merge count files into a single table
-        count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
+        count_table = merge_count_files(count_files, base_exp_dir, experiment_name, from_fastq=True)
         if count_table:
             results["count_table"] = count_table
-            logging.info(f"Created merged count table: {count_table}")
+            logging.info(f"Created merged count table from FASTQ files: {count_table}")
         else:
             logging.error("Failed to create merged count table")
             return {"error": "Failed to create merged count table"}
@@ -201,15 +203,19 @@ def process_experiment_by_type(
         elif count_related_csv:
             # Use the first count-related CSV file
             csv_file = count_related_csv[0]
-            count_table = make_count_table(csv_file, base_exp_dir)
+            from analysis_pipeline.core.file_handling import ensure_count_formats
+            csv_path, tab_path = ensure_count_formats(csv_file, base_exp_dir)
+            count_table = tab_path  # Use the tab-delimited file for analysis
             results["count_table"] = count_table
-            logging.info(f"Converted CSV to tab-delimited format: {count_table} (prioritized as count data)")
+            logging.info(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
         elif csv_tables:
             # If no count-specific CSV files found, use the first available CSV
             csv_file = csv_tables[0]
-            count_table = make_count_table(csv_file, base_exp_dir)
+            from analysis_pipeline.core.file_handling import ensure_count_formats
+            csv_path, tab_path = ensure_count_formats(csv_file, base_exp_dir)
+            count_table = tab_path  # Use the tab-delimited file for analysis
             results["count_table"] = count_table
-            logging.info(f"Converted CSV to tab-delimited format: {count_table} (using first available CSV)")
+            logging.info(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
         else:
             logging.error("No count tables or CSV files found")
             return {"error": "No count tables or CSV files found"}
@@ -484,7 +490,7 @@ def run_pipeline(
     input_dir: str,
     output_dir: str,
     library_file: Optional[str] = None,
-    experiment_name: str = "experiment",
+    experiment_name: Optional[str] = None,  # Changed to Optional with None default
     contrasts_file: Optional[str] = None,
     norm_method: str = DEFAULT_NORM_METHOD,
     fdr_threshold: float = DEFAULT_FDR_THRESHOLD,
@@ -507,7 +513,7 @@ def run_pipeline(
         input_dir: Directory containing experiment directories
         output_dir: Directory for output files
         library_file: Path to the library file (if not provided, will look in experiment directory)
-        experiment_name: Name of the experiment (corresponds to subdirectory in input_dir)
+        experiment_name: Name of the experiment (if not provided, will use the directory name)
         contrasts_file: Path to the contrasts file (if not provided, will look in experiment directory)
         norm_method: Normalization method for MAGeCK
         fdr_threshold: FDR threshold for significant genes
@@ -526,6 +532,11 @@ def run_pipeline(
     Returns:
         Dictionary of results
     """
+    # If experiment_name is not provided, derive it from the input directory
+    if experiment_name is None:
+        experiment_name = os.path.basename(os.path.normpath(input_dir))
+        logging.info(f"No experiment name provided, using directory name: {experiment_name}")
+    
     # Create a new progress reporter if none was provided
     if progress_reporter is None:
         # Import here to avoid circular imports
@@ -595,12 +606,34 @@ def run_pipeline(
         # Copy the count file to the experiment directory
         base_exp_dir = os.path.join(output_dir, experiment_name)
         os.makedirs(base_exp_dir, exist_ok=True)
-        dest_path = os.path.join(base_exp_dir, f"{experiment_name}.count")
+        
+        # If it's a CSV file, convert it to tab-delimited format
+        if count_file.endswith('.csv'):
+            try:
+                from analysis_pipeline.core.file_handling import ensure_count_formats
+                progress.update("CSV Conversion", f"Converting CSV to tab-delimited: {count_file}")
+                csv_path, tab_path = ensure_count_formats(count_file, output_dir)
+                count_file = tab_path  # Use the tab-delimited file for analysis
+                print(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
+            except Exception as e:
+                print(f"Error converting count file formats: {str(e)}")
+                return 1
+        # If it's a tab-delimited file, ensure we also have a CSV version
+        elif count_file.endswith('.count') or count_file.endswith('.counts') or count_file.endswith('.txt'):
+            try:
+                from analysis_pipeline.core.file_handling import ensure_count_formats
+                progress.update("Format Conversion", f"Ensuring both formats exist for: {count_file}")
+                csv_path, tab_path = ensure_count_formats(count_file, output_dir)
+                count_file = tab_path  # Continue using the tab-delimited file for analysis
+                print(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
+            except Exception as e:
+                print(f"Error ensuring count file formats: {str(e)}")
+                # Continue with the original file
         
         # Use our enhanced copy function with retry
         try:
-            copy_file(count_file, dest_path)
-            count_table = dest_path
+            copy_file(count_file, os.path.join(base_exp_dir, f"{experiment_name}.count"))
+            count_table = os.path.join(base_exp_dir, f"{experiment_name}.count")
             results["count_table"] = count_table
             has_count_files = True
             has_fastq = False  # Skip FASTQ processing if we have a count file
@@ -629,19 +662,36 @@ def run_pipeline(
             fastq_pattern = os.path.join(input_dir, experiment_name, "**", "*.fq*")
             fastq_files = glob.glob(fastq_pattern, recursive=True)
         
-        # Check count files
+        # Check count files with various extensions
+        count_files = []
+        
+        # Check for .count files
         count_pattern = os.path.join(input_dir, experiment_name, "**", "*.count")
-        count_files = glob.glob(count_pattern, recursive=True)
+        count_files.extend(glob.glob(count_pattern, recursive=True))
+        
+        # Check for .counts files
+        counts_pattern = os.path.join(input_dir, experiment_name, "**", "*.counts")
+        count_files.extend(glob.glob(counts_pattern, recursive=True))
         
         # If no count files found, check in data dir
         if not count_files:
-            count_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.count")
-            count_files = glob.glob(count_pattern, recursive=True)
+            count_pattern = os.path.join(input_dir, experiment_name, "data", "**", "*.count*")
+            count_files.extend(glob.glob(count_pattern, recursive=True))
         
         # Also look for count files in counts subdirectory
         if not count_files:
-            count_pattern = os.path.join(input_dir, experiment_name, "counts", "**", "*.count")
-            count_files = glob.glob(count_pattern, recursive=True)
+            count_pattern = os.path.join(input_dir, experiment_name, "counts", "**", "*.count*")
+            count_files.extend(glob.glob(count_pattern, recursive=True))
+            
+        # Also look for count files in read_count subdirectory
+        if not count_files:
+            count_pattern = os.path.join(input_dir, experiment_name, "read_count", "**", "*.count*")
+            count_files.extend(glob.glob(count_pattern, recursive=True))
+        
+        # Also look for CSV files that might be count files
+        for pattern in COUNT_CSV_PATTERN:
+            csv_pattern = os.path.join(input_dir, experiment_name, "**", pattern)
+            count_files.extend(glob.glob(csv_pattern, recursive=True))
         
         has_fastq = len(fastq_files) > 0
         has_count_files = len(count_files) > 0
@@ -761,17 +811,25 @@ def run_pipeline(
                 
                 # Merge count files into a single table - save directly in the experiment directory
                 progress_reporter.update("Count Generation", "Merging count files into a single table")
-                count_table = merge_count_files(count_files, base_exp_dir, experiment_name)
+                count_table = merge_count_files(count_files, base_exp_dir, experiment_name, from_fastq=True)
                 if count_table:
                     results["count_table"] = count_table
-                    logging.info(f"Created merged count table: {count_table}")
+                    logging.info(f"Created merged count table from FASTQ files: {count_table}")
                 else:
                     logging.error("Failed to create merged count table")
                     return {"error": "Failed to create merged count table"}
             else:
                 # Look for existing count tables or CSV files
                 progress_reporter.update("Count Files", "Finding and processing count files")
-                count_tables = glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True)
+                count_tables = []
+                
+                # Look for .count files
+                count_tables.extend(glob.glob(os.path.join(input_dir, '**/*.count'), recursive=True))
+                
+                # Look for .counts files
+                count_tables.extend(glob.glob(os.path.join(input_dir, '**/*.counts'), recursive=True))
+                
+                # Look for CSV files
                 csv_tables = glob.glob(os.path.join(input_dir, '**/*.csv'), recursive=True)
                 
                 # Filter and prioritize CSV tables that look like count data
@@ -788,7 +846,8 @@ def run_pipeline(
                 if count_tables:
                     count_table = count_tables[0]
                     # Copy the count table to the experiment directory
-                    dest_path = os.path.join(base_exp_dir, f"{experiment_name}.count")
+                    file_ext = os.path.splitext(count_table)[1]
+                    dest_path = os.path.join(base_exp_dir, f"{experiment_name}{file_ext}")
                     try:
                         copy_file(count_table, dest_path)
                         count_table = dest_path
@@ -800,23 +859,19 @@ def run_pipeline(
                 elif count_related_csv:
                     # Use the first count-related CSV file
                     csv_file = count_related_csv[0]
-                    try:
-                        count_table = make_count_table(csv_file, base_exp_dir)
-                        results["count_table"] = count_table
-                        logging.info(f"Converted CSV to tab-delimited format: {count_table} (prioritized as count data)")
-                    except Exception as e:
-                        logging.error(f"Error converting CSV file: {e}")
-                        return {"error": f"Failed to convert CSV file: {str(e)}"}
+                    from analysis_pipeline.core.file_handling import ensure_count_formats
+                    csv_path, tab_path = ensure_count_formats(csv_file, base_exp_dir)
+                    count_table = tab_path  # Use the tab-delimited file for analysis
+                    results["count_table"] = count_table
+                    logging.info(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
                 elif csv_tables:
                     # If no count-specific CSV files found, use the first available CSV
                     csv_file = csv_tables[0]
-                    try:
-                        count_table = make_count_table(csv_file, base_exp_dir)
-                        results["count_table"] = count_table
-                        logging.info(f"Converted CSV to tab-delimited format: {count_table} (using first available CSV)")
-                    except Exception as e:
-                        logging.error(f"Error converting CSV file: {e}")
-                        return {"error": f"Failed to convert CSV file: {str(e)}"}
+                    from analysis_pipeline.core.file_handling import ensure_count_formats
+                    csv_path, tab_path = ensure_count_formats(csv_file, base_exp_dir)
+                    count_table = tab_path  # Use the tab-delimited file for analysis
+                    results["count_table"] = count_table
+                    logging.info(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
                 else:
                     logging.error("No count tables or CSV files found")
                     return {"error": "No count tables or CSV files found"}
@@ -1021,13 +1076,25 @@ def main():
         # If it's a CSV file, convert it to tab-delimited format
         if count_file.endswith('.csv'):
             try:
-                from analysis_pipeline.core.file_handling import make_count_table
+                from analysis_pipeline.core.file_handling import ensure_count_formats
                 progress.update("CSV Conversion", f"Converting CSV to tab-delimited: {count_file}")
-                count_file = make_count_table(count_file, output_dir)
-                print(f"Converted CSV count file to tab-delimited format: {count_file}")
+                csv_path, tab_path = ensure_count_formats(count_file, output_dir)
+                count_file = tab_path  # Use the tab-delimited file for analysis
+                print(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
             except Exception as e:
-                print(f"Error converting CSV count file: {str(e)}")
+                print(f"Error converting count file formats: {str(e)}")
                 return 1
+        # If it's a tab-delimited file, ensure we also have a CSV version
+        elif count_file.endswith('.count') or count_file.endswith('.counts') or count_file.endswith('.txt'):
+            try:
+                from analysis_pipeline.core.file_handling import ensure_count_formats
+                progress.update("Format Conversion", f"Ensuring both formats exist for: {count_file}")
+                csv_path, tab_path = ensure_count_formats(count_file, output_dir)
+                count_file = tab_path  # Continue using the tab-delimited file for analysis
+                print(f"Created both formats - CSV: {csv_path}, Tab-delimited: {tab_path}")
+            except Exception as e:
+                print(f"Error ensuring count file formats: {str(e)}")
+                # Continue with the original file
     
     # Check if required files exist
     if not os.path.exists(library_file):
