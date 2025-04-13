@@ -13,9 +13,9 @@ import argparse
 import logging
 from pathlib import Path
 
-from analysis_pipeline.core.logging_setup import setup_logging
-from analysis_pipeline.core.file_handling import ensure_output_dir
-from analysis_pipeline.qc.screening.screen_qa_qc import create_fill_QC_df
+from core.logging_setup import setup_logging
+from core.file_handling import ensure_output_dir
+from qc.screening.screen_qa_qc import create_fill_QC_df
 
 def parse_arguments():
     """Parse command line arguments."""

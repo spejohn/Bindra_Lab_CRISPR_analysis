@@ -14,9 +14,10 @@ from typing import List, Dict, Any
 import pandas as pd
 from pathlib import Path
 
-from analysis_pipeline.pipeline import run_pipeline
-from analysis_pipeline.core.file_handling import identify_analyzed_experiments
-from analysis_pipeline.core.logging_setup import setup_logging
+# TODO: Refactor this script. run_pipeline no longer exists. Does this call Snakemake?
+# from analysis_pipeline.pipeline import run_pipeline
+from core.file_handling import identify_analyzed_experiments
+from core.logging_setup import setup_logging
 
 
 def detect_screen_directories(base_dir: str) -> List[str]:
@@ -209,18 +210,20 @@ def run_all_screens(
         
         # Run pipeline
         try:
-            screen_results = run_pipeline(
-                input_dir=screen_dir,
-                output_dir=output_dir,
-                library_file=library_file,
-                experiment_name=screen_name,
-                contrasts_file=contrasts_file,
-                overwrite=overwrite,
-                skip_drugz=skip_drugz,
-                skip_qc=skip_qc,
-                skip_mle=skip_mle,
-                use_docker=use_docker
-            )
+            # TODO: This needs to be replaced with Snakemake call or other logic
+            # screen_results = run_pipeline(
+            #     input_dir=screen_dir,
+            #     output_dir=output_dir,
+            #     library_file=library_file,
+            #     experiment_name=screen_name,
+            #     contrasts_file=contrasts_file,
+            #     overwrite=overwrite,
+            #     skip_drugz=skip_drugz,
+            #     skip_qc=skip_qc,
+            #     skip_mle=skip_mle,
+            #     use_docker=use_docker
+            # )
+            screen_results = {"status": "skipped", "error": "run_pipeline function not found"} # Placeholder
             
             results[screen_name] = screen_results
             screens_df = screens_df.append({
