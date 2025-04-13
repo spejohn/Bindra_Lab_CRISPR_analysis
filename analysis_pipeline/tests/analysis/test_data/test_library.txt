@@ -1,3 +1,0 @@
-sgRNA	Gene
-sgRNA1	GeneA
-sgRNA2	GeneB

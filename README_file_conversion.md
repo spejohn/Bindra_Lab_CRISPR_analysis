@@ -145,7 +145,7 @@ Where multiple samples in a single cell are comma-separated.
 
 #### Multiple Column Format
 
-For easier human editing, you can also use a format with multiple 'control' or 'treatment' columns:
+For easier editing, you can also use a format with multiple 'control' or 'treatment' columns:
 
 ```
 contrast,control,control,treatment,treatment

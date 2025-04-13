@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Tuple, Any
 
 # Import from other modules
-from analysis_pipeline.core.file_handling import ensure_output_dir
-from analysis_pipeline.docker.docker_utils import run_docker_container, verify_docker
-from analysis_pipeline.core.utils import convert_win_path_to_docker
-from analysis_pipeline.core.config import (
+from core.file_handling import ensure_output_dir
+from docker.docker_utils import run_docker_container, verify_docker
+from core.utils import convert_win_path_to_docker
+from core.config import (
     DOCKER_IMAGE,
     DEFAULT_NORM_METHOD,
     DEFAULT_ADJUST_METHOD,

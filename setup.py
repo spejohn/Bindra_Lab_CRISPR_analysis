@@ -16,20 +16,20 @@ with open(os.path.join(current_dir, 'requirements.txt')) as f:
     requirements = f.read().splitlines()
 
 setup(
-    name="analysis_pipeline",
+    name="crispr_analysis_pipeline",
     version="0.1.0",
     description="CRISPR Analysis Pipeline - A modular pipeline for CRISPR screening data analysis",
-    author="CRISPR Analysis Team",
-    packages=find_packages(include=['analysis_pipeline', 'analysis_pipeline.*']),
+    author="Spenser Johnson",
+    # Find packages automatically, excluding tests, scripts, docs, etc.
+    packages=find_packages(exclude=['tests*', 'scripts*', 'docs*', 'test_output*', '*egg-info*']),
     install_requires=requirements,
     python_requires=">=3.7",
     entry_points={
         'console_scripts': [
-            'run_pipeline=analysis_pipeline.pipeline:main',
-            'run_snakemake=analysis_pipeline.run_snakemake:main',
-            'run_qc_analysis=analysis_pipeline.run_qc_analysis:main',
-            'run_multiple_screens=analysis_pipeline.run_multiple_screens:main',
-            'convert_input_files=analysis_pipeline.convert_input_files:main',
+            # Remove analysis_pipeline prefix and the non-existent run_pipeline
+            'run_snakemake=run_snakemake:main',
+            'run_qc_analysis=run_qc_analysis:main',
+            'run_multiple_screens=run_multiple_screens:main',
         ],
     },
 ) 

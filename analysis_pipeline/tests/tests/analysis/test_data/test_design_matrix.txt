@@ -1,5 +1,0 @@
-Sample	condition
-control1	control
-control2	control
-treatment1	treatment
-treatment2	treatment

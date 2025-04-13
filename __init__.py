@@ -5,6 +5,6 @@ A modular pipeline for CRISPR screening data analysis, supporting MAGeCK (RRA an
 """
 
 __version__ = '0.1.0'
-__author__ = "CRISPR Analysis Team"
+__author__ = "Spenser Johnson"
 
 from analysis_pipeline.pipeline import run_pipeline 
