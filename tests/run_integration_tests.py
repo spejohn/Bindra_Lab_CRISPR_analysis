@@ -13,23 +13,17 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.absolute()
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-
-# Check if package is installed properly
-try:
-    import crispr_analysis_pipeline
-    print(f"crispr_analysis_pipeline is installed: version {crispr_analysis_pipeline.__version__}")
-except ImportError:
-    print("crispr_analysis_pipeline module is not properly installed.")
-    print("You may need to run `pip install .` or `pip install -e .` to install it.")
-    print("Continuing anyway with current Python path...")
+    print(f"Added project root to sys.path: {project_root}")
+else:
+    print(f"Project root already in sys.path: {project_root}")
 
 # Now run the integration tests
-print(f"Running integration tests with Python path: {sys.path[0]}")
+print(f"Running integration tests script: tests/integration/run_all_tests.py")
 try:
     result = subprocess.run(
         [sys.executable, "tests/integration/run_all_tests.py"],
         check=False,
-        cwd=project_root
+        cwd=project_root # Run tests from the project root directory
     )
     sys.exit(result.returncode)
 except Exception as e:

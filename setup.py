@@ -17,7 +17,7 @@ with open(os.path.join(current_dir, 'requirements.txt')) as f:
 
 setup(
     name="crispr_analysis_pipeline",
-    version="0.1.0",
+    version="0.2.0",
     description="CRISPR Analysis Pipeline - A modular pipeline for CRISPR screening data analysis",
     author="Spenser Johnson",
     # Find packages automatically, excluding tests, scripts, docs, etc.
