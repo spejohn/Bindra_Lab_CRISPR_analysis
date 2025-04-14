@@ -1,2 +1,0 @@
-contrast,control,treatment
-test_contrast,control1|control2,treatment1|treatment2

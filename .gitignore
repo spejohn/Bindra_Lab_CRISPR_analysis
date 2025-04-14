@@ -74,3 +74,6 @@ test_output/
 .coverage
 coverage.xml
 *.cover 
+
+# SLURM batch scripts
+*run_workflow.sh
