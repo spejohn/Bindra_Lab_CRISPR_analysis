@@ -1,8 +1,8 @@
 # profiles/slurm/config.yaml
 jobs: 100
 default-resources:
-  - mem_mb=4000 # Default 4GB RAM
-  - time_min=60   # Default 1 hour runtime
+  - mem_mb=32000 # Default 32GB RAM
+  - time_min=120 # Default 2 hour runtime
 cluster: >-
   sbatch
   --cpus-per-task={threads}
@@ -11,7 +11,7 @@ cluster: >-
   --job-name=sm.{rule}.{wildcards}
   --output=logs/{rule}.{wildcards}.out
   --error=logs/{rule}.{wildcards}.err
-# --- ADD YOUR CLUSTER SPECIFIC OPTIONS BELOW ---
-# --partition=<your_partition_name>  # e.g., --partition=compute
-# --account=<your_account_name>    # e.g., --account=project_abc
+  --partition=day
+  --email=spenser.johnson@yale.edu
+  --mail-type=END,FAIL
 # --------------------------------------------- 
