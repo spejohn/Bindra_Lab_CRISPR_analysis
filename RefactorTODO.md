@@ -135,7 +135,23 @@ This illustrates the expected organization of input data:
         - Skip flags (`--skip-qc`, `--skip-mle`, `--skip-drugz`).
         - `--overwrite`
 
-### Phase 4: Refactor/Create `run_crispr_analysis.py` (Local)
+### Phase 4: Refactor `Snakefile` for Native Containerization
+- **Purpose:** Modify the `Snakefile` to use Snakemake's native container support (`container:` and `--use-apptainer`/`--use-docker`) instead of passing a custom flag to Python functions.
+- **Tasks:**
+    - **Define Container URIs:** Define container image URIs (e.g., `FASTQC_IMAGE = "docker://..."`) at the top of the `Snakefile` or import them from a config module.
+    - **Remove Custom Flag:** Remove the `config.setdefault("use_apptainer", ...)` logic. Container runtime selection will be controlled by command-line flags passed to `snakemake`.
+    - **Refactor Rules (FastQC, MAGeCK count, RRA, MLE, DrugZ):**
+        - Add a `container:` directive specifying the appropriate image URI to each rule executing an external tool.
+        - Remove the `use_apptainer=...` entry from the `params:` section.
+        - Replace the `run:` block (which calls Python functions like `run_fastqc`) with a `shell:` block.
+        - **Command Construction:** Move the logic for building the command line (including handling options like paired-end reads, library formats, contrast samples) from the `core.analysis_steps.py` functions into the `shell:` directive strings, using Snakemake's formatting capabilities (`{input}`, `{output}`, `{params}`, `{threads}`, `{wildcards}`).
+        - **Helper Functions (Optional):** If command construction becomes too complex within the `shell:` directive, define Python helper functions *within the Snakefile* that return formatted command strings or parts of commands, and call these from the `shell:` directive (e.g., `shell: helper_function(wildcards, input, output)`).
+    - **Address Conditional Execution (`skip_*` flags):**
+        - Remove the `if config["skip_qc"]:` (and similar) checks from *within* the `run:` blocks (as these blocks are being replaced by `shell:`).
+        - Ensure that workflow skipping (based on `skip_qc`, `skip_mle`, etc.) is handled by conditionally requesting output files in `rule all` (via the `get_final_outputs` function) based on the configuration. The `run_snakemake.py` script will pass these config flags to Snakemake.
+    - **Update Workflow Execution:** Modify `run_snakemake.py` and/or `run_workflow.sh` to pass `--use-apptainer` or potentially `--use-docker` (as the default if neither is specified and containers are needed) to the `snakemake` command, instead of relying on the removed `--config use_apptainer=...`.
+
+### Phase 5: Refactor/Create `run_crispr_analysis.py` (Local)
 - Rename `run_multiple_screens.py` or create new script.
 - Adapt argument parsing: Accept list of specific experiment directory paths.
 - Implement main loop iterating through provided directories.
@@ -148,6 +164,6 @@ This illustrates the expected organization of input data:
 - Implement logging and summary.
 - (Optional) Add simple parallelism (e.g., `multiprocessing.Pool`).
 
-### Phase 5: Update Documentation & Testing
+### Phase 6: Update Documentation & Testing
 - Update `README.md`, `docs/INPUT_OUTPUT.md`, etc., to reflect the new architecture and usage.
 - Develop/update unit/integration tests for core functions and both execution modes. 

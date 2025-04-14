@@ -13,6 +13,7 @@ import sys  # Added for sys.exit
 import pandas as pd  # Needed for contrast parsing
 import shutil  # Added for shutil.copy
 from types import SimpleNamespace  # Needed for mocking wildcards
+import shlex  # Added for shlex.quote
 
 # --- Core Function Imports ---
 # Assuming core modules are importable relative to Snakefile location or via PYTHONPATH
@@ -56,17 +57,63 @@ config.setdefault(
     "target_experiments", None
 )  # Optional list of specific experiment names
 config.setdefault("skip_qc", False)
+config.setdefault("skip_rra", False) # Add skip_rra flag
 config.setdefault("skip_mle", False)
 config.setdefault("skip_drugz", False)
-config.setdefault("use_apptainer", True)  # Default to Apptainer
+# config.setdefault("use_apptainer", True)  # REMOVED - Containerization controlled by --use-apptainer/--use-docker
+
 # Add defaults for other analysis options (e.g., mageck norm_method) if needed
 config.setdefault("mageck_norm_method", "median")
+config.setdefault("mageck_mle_options", {})
+config.setdefault("drugz_options", {})
+
+# --- Container Image Definitions ---
+# These can be overridden via config file or --config flag
+# *** POINT TO DOCKER HUB URIs ***
+config.setdefault("fastqc_docker_uri", "docker://spejohn/crispr-analysis-fastqc:latest")
+config.setdefault("mageck_docker_uri", "docker://spejohn/crispr-analysis-mageck:latest")
+config.setdefault("drugz_docker_uri", "docker://spejohn/crispr-analysis-drugz:latest")
+
+# --- Local SIF File Paths ---
+# Define where the SIF files will be stored locally
+SIF_DIR = Path("containers") # Store SIF files in a dedicated 'containers' directory
+FASTQC_SIF = SIF_DIR / "fastqc.sif"
+MAGECK_SIF = SIF_DIR / "mageck.sif"
+DRUGZ_SIF = SIF_DIR / "drugz.sif"
 
 # --- Helper Variables ---
 BASE_DIR = Path(config["base_dir"]).resolve()
 OUTPUT_DIR = Path(config["output_dir"]).resolve()
 print(f"Base Input Directory: {BASE_DIR}")
 print(f"Base Output Directory: {OUTPUT_DIR}")
+
+# --- Rule to Build Apptainer SIF Files from Docker Hub ---
+# This rule builds the SIF files if they don't exist or if specified differently.
+# TODO: Add input dependency if needed (e.g., a version file)
+rule build_sif_files:
+    output:
+        fastqc=FASTQC_SIF,
+        mageck=MAGECK_SIF,
+        drugz=DRUGZ_SIF,
+    log:
+        # Log file placed within the SIF directory
+        SIF_DIR / "sif_build.log",
+    params:
+        fastqc_uri=config["fastqc_docker_uri"],
+        mageck_uri=config["mageck_docker_uri"],
+        drugz_uri=config["drugz_docker_uri"],
+        sif_dir=SIF_DIR,
+    shell:
+        # Create the SIF directory
+        "mkdir -p {params.sif_dir}; "
+        # Build each SIF file
+        # Use --force to overwrite existing SIF files if the rule is triggered
+        "echo 'Building FastQC SIF...' >> {log}; "
+        "apptainer build --force {output.fastqc} {params.fastqc_uri} >> {log} 2>&1 && \
+        "echo 'Building MAGeCK SIF...' >> {log}; "
+        "apptainer build --force {output.mageck} {params.mageck_uri} >> {log} 2>&1 && \
+        "echo 'Building DrugZ SIF...' >> {log}; "
+        "apptainer build --force {output.drugz} {params.drugz_uri} >> {log} 2>&1"
 
 # --- Experiment Discovery & Filtering ---
 
@@ -417,65 +464,31 @@ def get_fastq_r2_for_sample(wildcards):
 rule run_fastqc_per_sample:
     input:
         fastq=get_fastq_for_sample,
+        sif=FASTQC_SIF, # Depend on the specific SIF file
     output:
+        # Define both outputs as FastQC generates them
         html=OUTPUT_DIR / "{experiment}" / "qc" / "{sample}_fastqc.html",
         zip=OUTPUT_DIR / "{experiment}" / "qc" / "{sample}_fastqc.zip",
     params:
         output_dir=lambda wc, output: str(Path(output.html).parent),
-        use_apptainer=config["use_apptainer"],
+        # use_apptainer=config["use_apptainer"], # REMOVED - Controlled by --use-apptainer/--use-docker
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "fastqc_{sample}.log",
-    threads: 4  # Increase default threads
+    threads: 4
     resources:
-        mem_mb=24000, # Request 24GB memory for large FASTQ files
-        time_min=120 # Request 120 minutes (2 hours)
-    run:
-        if not input.fastq:
-            # Raise error for missing required input
-            error_msg = f"Input FASTQ file could not be determined for sample '{wildcards.sample}' in experiment '{wildcards.experiment}'. Check validation."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise FileNotFoundError(error_msg)
-
-        if config["skip_qc"]:
-            # Log skip and exit cleanly, no touch() needed
-            info_msg = f"Skipping FastQC for {wildcards.sample} due to skip_qc flag."
-            print(info_msg)
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.html)
-            # touch(output.zip)
-            sys.exit(0)
-        else:
-            print(
-                f"Running FastQC for {wildcards.experiment} - {wildcards.sample} ({input.fastq})"
-            )
-            Path(params.output_dir).mkdir(parents=True, exist_ok=True)
-            try:
-                success, out_path_or_msg = run_fastqc(
-                    fastq_path=str(input.fastq),
-                    output_dir=params.output_dir,
-                    use_apptainer=params.use_apptainer,
-                    threads=threads # Pass threads value from rule
-                )
-                if not success:
-                    # Log error and raise
-                    error_msg = (
-                        f"run_fastqc failed for {input.fastq}: {out_path_or_msg}"
-                    )
-                    print(f"ERROR: {error_msg}")
-                    with open(str(log), "w") as f:
-                        f.write(error_msg)
-                    raise RuntimeError(error_msg)
-                print(f"FastQC finished successfully for {wildcards.sample}")
-            except Exception as e:
-                # Log error and raise
-                error_msg = f"Error running FastQC for {wildcards.sample}: {e}"
-                print(f"ERROR: {error_msg}")
-                with open(str(log), "w") as f:
-                    f.write(f"Error running FastQC on {input.fastq}:\n{e}")
-                raise e
+        mem_mb=24000,
+        time_min=120
+    container:
+        input.sif # Use the SIF file from input
+    shell:
+        # Create output directory first
+        "mkdir -p {params.output_dir}; "
+        # Run fastqc
+        "fastqc "
+            "--threads {threads} "
+            "-o {params.output_dir} "
+            "{input.fastq} "
+            "> {log} 2>&1" # Redirect stdout and stderr to log file
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
@@ -551,79 +564,50 @@ rule aggregate_counts:
             )
 
 
-# --- Rule to run MAGeCK count per sample ---
-rule run_mageck_count_per_sample:
-    input:
-        # Gets R1 or single-end
-        r1=get_fastq_for_sample,
-        # Gets R2 if present, otherwise None
-        r2=get_fastq_r2_for_sample,
-        # Library path comes from validation info, accessed via params
-    output:
-        # Place results in a dedicated intermediate counts directory
-        count=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
-        summary=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.countsummary.txt",
-    params:
-        # Get library path from validation cache
-        library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
-        output_prefix=lambda wc, output: str(Path(output.count).parent / wc.sample),
-        sample_name="{sample}",
-        use_apptainer=config["use_apptainer"],
-        # Pass other MAGeCK count options from config if needed
-        # count_options = config.get("mageck_count_options", {})
-    log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "mageck_count_{sample}.log",
-    # Adjust if MAGeCK count can use more threads
-    threads: 1
-    run:
-        # Ensure library was found during validation
-        if not params.library:
-            raise ValueError(
-                f"Library path not found during validation for experiment '{wildcards.experiment}'"
-            )
-        if not Path(params.library).exists():
-            raise FileNotFoundError(
-                f"Library file {params.library} not found for experiment '{wildcards.experiment}'"
-            )
+# --- Function to determine MAGeCK library flag ---
+def get_mageck_library_flag(library_path):
+    """Returns '--library' or '--list-seq' based on file extension."""
+    if str(library_path).lower().endswith(".csv"):
+        return "--list-seq"
+    else:
+        return "--library"
 
-            # Ensure R1 input was found
-        if not input.r1:
-            raise FileNotFoundError(
-                f"Input R1 FASTQ file could not be determined for sample '{wildcards.sample}' in experiment '{wildcards.experiment}'."
-            )
+# --- Helper Functions for Contrast/Option Formatting ---
+def get_contrast_samples(wildcards, sample_type):
+    """Gets comma-separated list of treatment or control samples for a contrast."""
+    experiment = wildcards.experiment
+    contrast_name = wildcards.contrast
+    experiment_contrasts = ContrastCache.get(experiment)
+    if not isinstance(experiment_contrasts, list):
+        raise ValueError(f"Contrast info not loaded for experiment '{experiment}'")
+    contrast_info = next((c for c in experiment_contrasts if c.get("name") == contrast_name), None)
+    if not contrast_info:
+        raise ValueError(f"Could not find contrast details for '{contrast_name}' in '{experiment}'")
+    samples = contrast_info.get(sample_type)
+    if not samples or not isinstance(samples, list):
+        raise ValueError(f"Invalid or missing '{sample_type}' samples for '{contrast_name}' in '{experiment}'")
+    return ",".join(samples)
 
-        print(f"Running MAGeCK count for {wildcards.experiment} - {wildcards.sample}")
-        # Ensure output directory exists
-        Path(output.count).parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Call the core analysis step function
-            success, out_path_or_msg = run_mageck_count(
-                r1_fastq=str(input.r1),
-                library_path=str(params.library),
-                output_prefix=str(params.output_prefix),
-                r2_fastq=str(input.r2) if input.r2 else None,
-                sample_name=params.sample_name,
-                # count_options=params.count_options, # Pass if defined
-                use_apptainer=params.use_apptainer,
-            )
-            if not success:
-                raise RuntimeError(
-                    f"run_mageck_count failed for {input.r1}: {out_path_or_msg}"
-                )
-            print(f"MAGeCK count finished successfully for {wildcards.sample}")
-        except Exception as e:
-            print(f"Error running MAGeCK count for {wildcards.sample}: {e}")
-            with open(str(log), "w") as f:
-                f.write(f"Error running MAGeCK count on {input.r1}:\n{e}")
-            raise e
-
+def format_options(options_dict):
+    """Formats a dictionary of options into a command-line string."""
+    parts = []
+    for key, value in options_dict.items():
+        clean_key = key.lstrip('-')
+        formatted_key = f"--{clean_key}"
+        if value is None or value is True:
+            parts.append(formatted_key)
+        elif value is False:
+            pass # Skip false boolean flags
+        else:
+            parts.append(f"{formatted_key} {shlex.quote(str(value))}") # Quote values
+    return " ".join(parts)
 
 # --- Rule to run MAGeCK RRA per contrast ---
 rule run_mageck_rra_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        # Depends implicitly on contrasts_txt via ContrastCache population
+        sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         gene_summary=OUTPUT_DIR
         / "{experiment}"
@@ -639,285 +623,75 @@ rule run_mageck_rra_per_contrast:
         output_prefix=lambda wc, output: str(
             Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
         ),
-        use_apptainer=config["use_apptainer"],
-        analysis_options={"norm-method": config.get("mageck_norm_method", "median")},
+        # use_apptainer=config["use_apptainer"], # REMOVED
+        # Get comma-separated sample lists using helper
+        treatment_samples=lambda wc: get_contrast_samples(wc, 'treatment'),
+        control_samples=lambda wc: get_contrast_samples(wc, 'control'),
+        # Format analysis options from config
+        analysis_options_str=lambda wc: format_options(
+            # Combine default norm method with any other RRA options
+            {**{"norm-method": config.get("mageck_norm_method", "median")},
+             **config.get("mageck_rra_options", {})} # Define mageck_rra_options in config if needed
+        )
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
-    run:
-        config.setdefault("skip_rra", False)
-        if config["skip_rra"]:
-            # Log skip and exit cleanly
-            info_msg = f"Skipping MAGeCK RRA for {wildcards.experiment} - Contrast: {wildcards.contrast} due to skip_rra flag."
-            print(info_msg)
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            sys.exit(0)
-
-        experiment_contrasts = ContrastCache.get(wildcards.experiment)
-        if not isinstance(experiment_contrasts, list):
-            # Raise error
-            error_msg = f"Contrast information not available or invalid for experiment '{wildcards.experiment}'."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise ValueError(error_msg)
-
-        contrast_info = next(
-            (c for c in experiment_contrasts if c.get("name") == wildcards.contrast),
-            None,
-        )
-        if not contrast_info:
-            # Raise error
-            error_msg = f"Could not find contrast details for '{wildcards.contrast}' in experiment '{wildcards.experiment}'."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise ValueError(error_msg)
-
-        print(
-            f"Running MAGeCK RRA for {wildcards.experiment} - Contrast: {wildcards.contrast}"
-        )
-
-        # Check required input count file
-        if (
-            not Path(input.count_file).exists()
-            or Path(input.count_file).stat().st_size == 0
-        ):
-            # Log error and raise
-            error_msg = f"Input count file {input.count_file} is missing or empty. Cannot run RRA for {wildcards.contrast}."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            # sys.exit(0) # Don't exit cleanly, this is an error
-            raise FileNotFoundError(error_msg)
-
-        Path(output.gene_summary).parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            success, out_path_or_msg = run_mageck_rra(
-                count_path=str(input.count_file),
-                contrast_info=contrast_info,
-                output_prefix=params.output_prefix,
-                analysis_options=params.analysis_options,
-                use_apptainer=params.use_apptainer,
-            )
-
-            if not success:
-                # Log error and raise
-                error_msg = f"run_mageck_rra failed for contrast {wildcards.contrast}: {out_path_or_msg}"
-                print(f"ERROR: {error_msg}")
-                with open(str(log), "w") as f:
-                    f.write(error_msg)
-                # touch(output.gene_summary)
-                # touch(output.sgrna_summary)
-                raise RuntimeError(error_msg)
-
-            expected_output = Path(out_path_or_msg)
-            if str(expected_output.resolve()) != str(
-                Path(output.gene_summary).resolve()
-            ):
-                warn_msg = f"Warning: run_mageck_rra reported success path '{out_path_or_msg}' which doesn't match expected output '{output.gene_summary}'"
-                print(warn_msg)
-
-            print(
-                f"MAGeCK RRA finished successfully for {wildcards.experiment} - {wildcards.contrast}"
-            )
-
-            sgrna_path_expected = Path(output.sgrna_summary)
-            sgrna_path_actual = Path(params.output_prefix + ".sgrna_summary.txt")
-            if not sgrna_path_actual.exists() or str(
-                sgrna_path_actual.resolve()
-            ) != str(sgrna_path_expected.resolve()):
-                # Just log warning about secondary output
-                print(
-                    f"Warning: Expected sgrna summary file {sgrna_path_expected} not found or path mismatch (actual: {sgrna_path_actual})."
-                )
-                # No touch() needed
-
-        except Exception as e:
-            # Log error and raise
-            error_msg = (
-                f"Unexpected error running MAGeCK RRA for {wildcards.contrast}: {e}"
-            )
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            raise e
+    container:
+        input.sif # Use the SIF file from input
+    shell:
+        # Ensure output directory exists first
+        "mkdir -p $(dirname {output.gene_summary}); "
+        # Run mageck test
+        "mageck test "
+            "-k {input.count_file} "
+            "-t {params.treatment_samples} "
+            "-c {params.control_samples} "
+            "-n {params.output_prefix} "
+            "{params.analysis_options_str} "
+            "> {log} 2>&1"
 
 
-# --- Rule to run MAGeCK MLE per contrast (Conditional) ---
-rule run_mageck_mle_per_contrast:
+# --- Rule to run MAGeCK MLE per experiment (Conditional) ---
+rule run_mageck_mle_per_experiment:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
         design_matrix=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
-        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
-        gene_summary=OUTPUT_DIR
-        / "{experiment}"
-        / "{contrast}"
-        / "analysis_results"
-        / "{contrast}_MLE.gene_summary.txt",
-        sgrna_summary=OUTPUT_DIR
-        / "{experiment}"
-        / "{contrast}"
-        / "analysis_results"
-        / "{contrast}_MLE.sgrna_summary.txt",
-        beta_coeff=OUTPUT_DIR
-        / "{experiment}"
-        / "{contrast}"
-        / "analysis_results"
-        / "{contrast}_MLE.beta_coefficients.txt",
+        # Experiment-level outputs in analysis_results
+        gene_summary=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.gene_summary.txt",
+        sgrna_summary=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.sgrna_summary.txt",
+        beta_coeff=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.beta_coefficients.txt",
     params:
+        # Output prefix reflects experiment-level analysis
         output_prefix=lambda wc, output: str(
-            Path(output.gene_summary).parent / f"{wc.contrast}_MLE"
+            Path(output.gene_summary).parent / f"{wc.experiment}_MLE"
         ),
-        use_apptainer=config["use_apptainer"],
-        analysis_options=config.get("mageck_mle_options", {}),
+        # Format analysis options from config
+        analysis_options_str=lambda wc: format_options(config.get("mageck_mle_options", {})),
     log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "mageck_mle_{contrast}.log",
-    threads: 1
-    run:
-        if config["skip_mle"]:
-            # Log skip and exit cleanly
-            info_msg = f"Skipping MAGeCK MLE for {wildcards.experiment} - Contrast: {wildcards.contrast} due to skip_mle flag."
-            print(info_msg)
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            # touch(output.beta_coeff)
-            sys.exit(0)
-
-        design_matrix_path = Path(input.design_matrix)
-        if not design_matrix_path.exists() or design_matrix_path.stat().st_size == 0:
-            # Log skip for missing optional input and exit cleanly
-            info_msg = f"Skipping MAGeCK MLE for {wildcards.experiment} - Contrast: {wildcards.contrast}: Design matrix '{design_matrix_path}' not found or is empty."
-            print(info_msg)
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            # touch(output.beta_coeff)
-            sys.exit(0)
-
-        experiment_contrasts = ContrastCache.get(wildcards.experiment)
-        if not isinstance(experiment_contrasts, list):
-            # Raise error
-            error_msg = f"Contrast information not available or invalid for experiment '{wildcards.experiment}' needed for MLE rule setup."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise ValueError(error_msg)
-
-        contrast_info = next(
-            (c for c in experiment_contrasts if c.get("name") == wildcards.contrast),
-            None,
-        )
-        if not contrast_info:
-            print(
-                f"Warning: Could not find exact contrast details for '{wildcards.contrast}' in parsed contrasts. Using basic name for MLE."
-            )
-            contrast_info = {"name": wildcards.contrast}
-
-            # Check required input count file
-        if (
-            not Path(input.count_file).exists()
-            or Path(input.count_file).stat().st_size == 0
-        ):
-            # Log error and raise
-            error_msg = f"Input count file {input.count_file} is missing or empty. Cannot run MLE for {wildcards.contrast}."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            # touch(output.beta_coeff)
-            # sys.exit(0)
-            raise FileNotFoundError(error_msg)
-
-        print(
-            f"Running MAGeCK MLE for {wildcards.experiment} - Contrast: {wildcards.contrast}"
-        )
-        Path(output.gene_summary).parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            success, out_path_or_msg = run_mageck_mle(
-                count_path=str(input.count_file),
-                design_matrix_path=str(design_matrix_path),
-                contrast_info=contrast_info,
-                output_prefix=params.output_prefix,
-                analysis_options=params.analysis_options,
-                use_apptainer=params.use_apptainer,
-            )
-
-            if not success:
-                # Log error and raise
-                error_msg = f"run_mageck_mle failed for contrast {wildcards.contrast}: {out_path_or_msg}"
-                print(f"ERROR: {error_msg}")
-                with open(str(log), "w") as f:
-                    f.write(error_msg)
-                # touch(output.gene_summary)
-                # touch(output.sgrna_summary)
-                # touch(output.beta_coeff)
-                raise RuntimeError(error_msg)
-
-            expected_output = Path(out_path_or_msg)
-            if str(expected_output.resolve()) != str(
-                Path(output.gene_summary).resolve()
-            ):
-                warn_msg = f"Warning: run_mageck_mle reported success path '{out_path_or_msg}' which doesn't match expected output '{output.gene_summary}'"
-                print(warn_msg)
-
-            print(
-                f"MAGeCK MLE finished successfully for {wildcards.experiment} - {wildcards.contrast}"
-            )
-
-            sgrna_path_expected = Path(output.sgrna_summary)
-            sgrna_path_actual = Path(params.output_prefix + ".sgrna_summary.txt")
-            if not sgrna_path_actual.exists() or str(
-                sgrna_path_actual.resolve()
-            ) != str(sgrna_path_expected.resolve()):
-                print(
-                    f"Warning: Expected sgrna summary file {sgrna_path_expected} not found or path mismatch (actual: {sgrna_path_actual})."
-                )
-                # No touch()
-
-            beta_path_expected = Path(output.beta_coeff)
-            beta_path_actual = Path(params.output_prefix + ".beta_coefficients.txt")
-            if not beta_path_actual.exists() or str(beta_path_actual.resolve()) != str(
-                beta_path_expected.resolve()
-            ):
-                print(
-                    f"Warning: Expected beta coefficients file {beta_path_expected} not found or path mismatch (actual: {beta_path_actual})."
-                )
-                # No touch()
-
-        except Exception as e:
-            # Log error and raise
-            error_msg = (
-                f"Unexpected error running MAGeCK MLE for {wildcards.contrast}: {e}"
-            )
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.gene_summary)
-            # touch(output.sgrna_summary)
-            # touch(output.beta_coeff)
-            raise e
+        OUTPUT_DIR / "{experiment}" / "logs" / "mageck_mle_{experiment}.log", # Log per experiment
+    threads: 1 # MAGeCK MLE can sometimes use more, but often limited by I/O
+    container:
+        input.sif # Use the SIF file from input
+    shell:
+        # Ensure output directory exists first
+        "mkdir -p $(dirname {output.gene_summary}); "
+        # Run mageck mle
+        "mageck mle "
+            "-k {input.count_file} "
+            "-d {input.design_matrix} "
+            "-n {params.output_prefix} "
+            "{params.analysis_options_str} "
+            "> {log} 2>&1"
 
 
 # --- Rule to run DrugZ per contrast (Conditional) ---
 rule run_drugz_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        # Implicit dependency on contrasts.txt via ContrastCache
+        sif=DRUGZ_SIF, # Depend on the specific SIF file
     output:
         drugz_results=OUTPUT_DIR
         / "{experiment}"
@@ -925,101 +699,30 @@ rule run_drugz_per_contrast:
         / "analysis_results"
         / "{contrast}_DrugZ.txt",
     params:
-        output_prefix=lambda wc, output: str(
-            Path(output.drugz_results).parent / f"{wc.contrast}_DrugZ"
-        ),
-        use_apptainer=config["use_apptainer"],
-        analysis_options=config.get("drugz_options", {}),
+        # Define output path based on expected output file name
+        # DrugZ script takes explicit output file path, not prefix
+        output_path=lambda wc, output: output.drugz_results,
+        # Get comma-separated sample lists using helper
+        treatment_samples=lambda wc: get_contrast_samples(wc, 'treatment'),
+        control_samples=lambda wc: get_contrast_samples(wc, 'control'),
+        # Format analysis options from config
+        analysis_options_str=lambda wc: format_options(config.get("drugz_options", {})),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "drugz_{contrast}.log",
     threads: 1
-    run:
-        if config["skip_drugz"]:
-            # Log skip and exit cleanly
-            info_msg = f"Skipping DrugZ for {wildcards.experiment} - Contrast: {wildcards.contrast} due to skip_drugz flag."
-            print(info_msg)
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.drugz_results)
-            sys.exit(0)
-
-        experiment_contrasts = ContrastCache.get(wildcards.experiment)
-        if not isinstance(experiment_contrasts, list):
-            # Raise error
-            error_msg = f"Contrast information not available or invalid for experiment '{wildcards.experiment}'."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise ValueError(error_msg)
-
-        contrast_info = next(
-            (c for c in experiment_contrasts if c.get("name") == wildcards.contrast),
-            None,
-        )
-        if not contrast_info:
-            # Raise error
-            error_msg = f"Could not find contrast details for '{wildcards.contrast}' in experiment '{wildcards.experiment}'."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise ValueError(error_msg)
-
-            # Check required input count file
-        if (
-            not Path(input.count_file).exists()
-            or Path(input.count_file).stat().st_size == 0
-        ):
-            # Log error and raise
-            error_msg = f"Input count file {input.count_file} is missing or empty. Cannot run DrugZ for {wildcards.contrast}."
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.drugz_results)
-            # sys.exit(0)
-            raise FileNotFoundError(error_msg)
-
-        print(
-            f"Running DrugZ for {wildcards.experiment} - Contrast: {wildcards.contrast}"
-        )
-        Path(output.drugz_results).parent.mkdir(parents=True, exist_ok=True)
-
-        try:
-            success, out_path_or_msg = run_drugz(
-                count_path=str(input.count_file),
-                contrast_info=contrast_info,
-                output_prefix=params.output_prefix,
-                analysis_options=params.analysis_options,
-                use_apptainer=params.use_apptainer,
-            )
-
-            if not success:
-                # Log error and raise
-                error_msg = f"run_drugz failed for contrast {wildcards.contrast}: {out_path_or_msg}"
-                print(f"ERROR: {error_msg}")
-                with open(str(log), "w") as f:
-                    f.write(error_msg)
-                # touch(output.drugz_results)
-                raise RuntimeError(error_msg)
-
-            expected_output = Path(out_path_or_msg)
-            if str(expected_output.resolve()) != str(
-                Path(output.drugz_results).resolve()
-            ):
-                warn_msg = f"Warning: run_drugz reported success path '{out_path_or_msg}' which doesn't match expected output '{output.drugz_results}'"
-                print(warn_msg)
-
-            print(
-                f"DrugZ finished successfully for {wildcards.experiment} - {wildcards.contrast}"
-            )
-
-        except Exception as e:
-            # Log error and raise
-            error_msg = f"Unexpected error running DrugZ for {wildcards.contrast}: {e}"
-            print(f"ERROR: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.drugz_results)
-            raise e
+    container:
+        input.sif # Use the SIF file from input
+    shell:
+        # Ensure output directory exists first
+        "mkdir -p $(dirname {output.drugz_results}); "
+        # Assume drugz.py is at /drugz/drugz.py in the container
+        "python /drugz/drugz.py "
+            "--input {input.count_file} "
+            "--output {params.output_path} # Pass the full output path
+            "--control-id {params.control_samples} "
+            "--treatment-id {params.treatment_samples} "
+            "{params.analysis_options_str} "
+            "> {log} 2>&1"
 
 
 # --- Rule to Convert MAGeCK RRA Results to CSV ---
@@ -1031,7 +734,8 @@ rule convert_rra_results:
         / "analysis_results"
         / "{contrast}_RRA.gene_summary.txt",
     output:
-        csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}" / "{contrast}_gMGK.csv",
+        # Place converted file directly under experiment dir
+        csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}_gMGK.csv",
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_rra_{contrast}.log",
     run:
@@ -1090,19 +794,18 @@ rule convert_rra_results:
 # --- Rule to Convert MAGeCK MLE Results to CSV (Conditional) ---
 rule convert_mle_results:
     input:
-        mle_summary=OUTPUT_DIR
-        / "{experiment}"
-        / "{contrast}"
-        / "analysis_results"
-        / "{contrast}_MLE.gene_summary.txt",
+        # Input is the experiment-level MLE summary
+        mle_summary=OUTPUT_DIR / "{experiment}" / "MLE_analysis_results" / "{experiment}_MLE.gene_summary.txt", # Updated input path
     output:
-        csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}" / "{contrast}_gMLE.csv",
+        # Place converted file directly under experiment dir
+        csv_summary=OUTPUT_DIR / "{experiment}" / "{experiment}_gMLE.csv",
     log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "convert_mle_{contrast}.log",
+        # Log is per experiment
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_mle_{experiment}.log",
     run:
         if config.get("skip_mle", False):
             # Log skip and exit cleanly
-            info_msg = f"Skipping MLE result conversion for {wildcards.contrast} due to skip_mle flag."
+            info_msg = f"Skipping MLE result conversion for {wildcards.experiment} due to skip_mle flag."
             print(info_msg)
             with open(str(log), "w") as f:
                 f.write(info_msg)
@@ -1112,7 +815,7 @@ rule convert_mle_results:
         design_matrix_path = OUTPUT_DIR / wildcards.experiment / "design_matrix.txt"
         if not design_matrix_path.exists() or design_matrix_path.stat().st_size == 0:
             # Log skip and exit cleanly (matches skip condition in run_mle rule)
-            info_msg = f"Skipping MLE result conversion for {wildcards.contrast}: Design matrix was missing or empty."
+            info_msg = f"Skipping MLE result conversion for {wildcards.experiment}: Design matrix was missing or empty."
             print(info_msg)
             with open(str(log), "w") as f:
                 f.write(info_msg)
@@ -1133,10 +836,11 @@ rule convert_mle_results:
             raise FileNotFoundError(error_msg)
 
         print(
-            f"Converting MAGeCK MLE results for {wildcards.experiment} - Contrast: {wildcards.contrast}"
+            f"Converting MAGeCK MLE results for {wildcards.experiment}"
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
+            # Ensure this function exists and handles the input/output format
             convert_mageck_summary_to_csv(
                 input_txt_path=str(input.mle_summary),
                 output_csv_path=str(output.csv_summary),
@@ -1154,7 +858,7 @@ rule convert_mle_results:
             raise
         except Exception as e:
             # Log error and raise
-            error_msg = f"Error converting MLE results for {wildcards.contrast}: {e}"
+            error_msg = f"Error converting MLE results for {wildcards.experiment}: {e}"
             print(f"ERROR: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
@@ -1171,7 +875,8 @@ rule convert_drugz_results:
         / "analysis_results"
         / "{contrast}_DrugZ.txt",
     output:
-        csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}" / "{contrast}_gDZ.csv",
+        # Place converted file directly under experiment dir
+        csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}_gDZ.csv",
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_drugz_{contrast}.log",
     run:
@@ -1608,70 +1313,89 @@ def get_final_outputs():
 
         contrasts = get_contrast_names(SimpleNamespace(experiment=experiment))
         if (
-            not isinstance(contrasts, list) or "error" in contrasts[0]
-        ):  # Handle error case from get_contrast_names
+            not isinstance(contrasts, list) or ("error" in contrasts[0] if contrasts else False) # Handle error case and empty list
+        ): 
             print(
                 f"Skipping contrast-specific outputs for {experiment} due to contrast parsing issues."
             )
             contrasts = []
 
-        # 1. Converted Analysis Results (per contrast)
+        # --- 1. Analysis Results (per contrast / per experiment) ---
         for contrast in contrasts:
+            # Add RRA results if not skipped
             if not config.get("skip_rra", False):
                 final_files.append(
-                    OUTPUT_DIR / experiment / contrast / f"{contrast}_gMGK.csv"
+                    # Expect converted CSV at experiment level
+                    OUTPUT_DIR / experiment / f"{contrast}_gMGK.csv"
                 )
 
-            # MLE requires design matrix AND skip flag check
-            design_matrix_path = OUTPUT_DIR / experiment / "design_matrix.txt"
-            if (
-                not config.get("skip_mle", False)
-                and design_matrix_path.exists()
-                and design_matrix_path.stat().st_size > 0
-            ):
-                final_files.append(
-                    OUTPUT_DIR / experiment / contrast / f"{contrast}_gMLE.csv"
-                )
-
+            # Add DrugZ results if not skipped
             if not config.get("skip_drugz", False):
                 final_files.append(
-                    OUTPUT_DIR / experiment / contrast / f"{contrast}_gDZ.csv"
+                    # Expect converted CSV at experiment level
+                    OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
                 )
 
-        # 2. QC Files (per experiment / per contrast)
+        # Add MLE results (per experiment) if not skipped AND design matrix exists
+        # Check for *converted* design matrix in output dir
+        design_matrix_path = OUTPUT_DIR / experiment / "design_matrix.txt"
+        # Check if the *rule output* design matrix exists and is non-empty
+        design_output_exists = design_matrix_path.exists() and design_matrix_path.stat().st_size > 0
+
+        if not config.get("skip_mle", False) and design_output_exists:
+            # Add NATIVE MLE outputs (now experiment-level)
+            final_files.append(
+                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.gene_summary.txt"
+            )
+            final_files.append(
+                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.sgrna_summary.txt"
+            )
+            final_files.append(
+                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.beta_coefficients.txt"
+            )
+            # Add CONVERTED MLE CSV (at experiment level)
+            final_files.append(
+                 OUTPUT_DIR / experiment / f"{experiment}_gMLE.csv"
+            )
+
+        # --- 2. QC Files (Conditional) ---
         if not config.get("skip_qc", False):
-            # Per-experiment QC plots
-            final_files.append(
-                OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
-            )
-            final_files.append(
-                OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
-            )
-            final_files.append(
-                OUTPUT_DIR / experiment / "qc" / f"{experiment}_gini_index.html"
-            )
-            final_files.append(
-                OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
-            )  # Aggregate report
+            # Per-experiment QC plots (ensure rules still exist)
+            if "plot_sgrna_distribution" in globals(): # Check if rule exists
+                final_files.append(
+                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
+                )
+            if "plot_gene_distribution" in globals():
+                final_files.append(
+                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
+                )
+            if "plot_gini_index" in globals():
+                final_files.append(
+                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_gini_index.html"
+                )
+            if "generate_qc_report" in globals():
+                final_files.append(
+                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
+                )  # Aggregate report
 
             # Per-contrast QC plots (ROC needs controls check)
-            known_controls_path = BASE_DIR / experiment / "known_controls.csv"
-            for contrast in contrasts:
-                if known_controls_path.exists():  # Only add ROC if controls file exists
-                    final_files.append(
-                        OUTPUT_DIR
-                        / experiment
-                        / "qc"
-                        / f"{experiment}_{contrast}_roc.html"
-                    )
+            if "plot_roc_curve" in globals():
+                known_controls_path = BASE_DIR / experiment / "known_controls.csv"
+                if known_controls_path.exists(): # Only add ROC if controls file exists
+                    for contrast in contrasts:
+                        final_files.append(
+                            OUTPUT_DIR
+                            / experiment
+                            / "qc"
+                            / f"{experiment}_{contrast}_roc.html"
+                        )
 
             # Per-sample FastQC reports (if FASTQ input)
-            if validation_info.get("data_type") == "fastq":
+            if validation_info.get("data_type") == "fastq" and "run_fastqc_per_sample" in globals():
                 for sample in get_fastq_basenames(experiment):
                     final_files.append(
                         OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.html"
                     )
-                    # Add .zip as well if FastQC rule generates it
                     final_files.append(
                         OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.zip"
                     )

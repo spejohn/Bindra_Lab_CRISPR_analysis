@@ -102,27 +102,30 @@ The pipeline creates a standardized directory structure:
 ```
 <output_dir>/
 ├── <experiment_name>/                      # Main experiment directory
-│   ├── <experiment_name>.count             # Merged count file for the experiment
-│   ├── <experiment_name>_final.count.txt   # Final count table used for analysis
+│   ├── <experiment_name>.count.txt         # Merged count file for the experiment
 │   ├── contrasts.txt                     # Converted contrasts file used for analysis
 │   ├── design_matrix.txt                 # Converted design matrix (if applicable)
+│   ├── <experiment_name>_gMLE.csv        # Converted MLE results (CSV, if run)
+│   ├── <contrast_name1>_gMGK.csv         # Converted RRA results for contrast 1 (CSV)
+│   ├── <contrast_name1>_gDZ.csv          # Converted DrugZ results for contrast 1 (CSV, if run)
+│   ├── <contrast_name2>_gMGK.csv         # Converted RRA results for contrast 2 (CSV)
+│   ├── <contrast_name2>_gDZ.csv          # Converted DrugZ results for contrast 2 (CSV, if run)
+│   ├── ...                               # Other contrast CSVs...
 │   ├── logs/                             # Directory for Snakemake rule logs
 │   │   └── ...
-│   ├── counts/                           # Intermediate counts per sample (if FASTQ input)
+│   ├── counts/                           # Intermediate counts per sample (if FASTQ input, will be removed)
 │   │   └── ...
 │   │
+│   ├── MLE_analysis_results/             # Directory for experiment-level MLE analysis native outputs
+│   │   ├── <experiment_name>_MLE.gene_summary.txt     # (If MLE run)
+│   │   ├── <experiment_name>_MLE.sgrna_summary.txt    # (If MLE run)
+│   │   └── <experiment_name>_MLE.beta_coefficients.txt # (If MLE run)
+│   │
 │   ├── <contrast_name1>/                   # First contrast directory
-│   │   ├── analysis_results/             # Native tool outputs
-│   │   │   ├── <contrast_name1>_RRA.gene_summary.txt
-│   │   │   ├── <contrast_name1>_RRA.sgrna_summary.txt
-│   │   │   ├── <contrast_name1>_MLE.gene_summary.txt     # (If MLE run)
-│   │   │   ├── <contrast_name1>_MLE.sgrna_summary.txt    # (If MLE run)
-│   │   │   ├── <contrast_name1>_MLE.beta_coefficients.txt # (If MLE run)
-│   │   │   └── <contrast_name1>_DrugZ.txt                # (If DrugZ run)
-│   │   │   
-│   │   ├── <contrast_name1>_gMGK.csv      # Converted RRA results (CSV)
-│   │   ├── <contrast_name1>_gMLE.csv      # Converted MLE results (CSV, if run)
-│   │   └── <contrast_name1>_gDZ.csv       # Converted DrugZ results (CSV, if run)
+│   │   └── analysis_results/             # Native tool outputs (contrast-specific)
+│   │       ├── <contrast_name1>_RRA.gene_summary.txt
+│   │       ├── <contrast_name1>_RRA.sgrna_summary.txt
+│   │       └── <contrast_name1>_DrugZ.txt                # (If DrugZ run)
 │   │
 │   ├── <contrast_name2>/                   # Second contrast directory
 │   │   └── ... (similar structure)
@@ -145,9 +148,9 @@ When processing both FASTQ and count files (if supported in future), separate ex
 -   **Converted Contrasts**: `<output_dir>/<experiment_name>/contrasts.txt`
 -   **Converted Design Matrix**: `<output_dir>/<experiment_name>/design_matrix.txt`
 -   **RRA Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_RRA.gene_summary.txt`
--   **RRA Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gMGK.csv`
--   **MLE Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_MLE.gene_summary.txt` (if run)
--   **MLE Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gMLE.csv` (if run)
+-   **RRA Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>_gMGK.csv`
+-   **MLE Results (Native)**: `<output_dir>/<experiment_name>/MLE_analysis_results/<experiment_name>_MLE.gene_summary.txt` (if run)
+-   **MLE Results (Converted)**: `<output_dir>/<experiment_name>/<experiment_name>_gMLE.csv` (if run)
 -   **DrugZ Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_DrugZ.txt` (if run)
--   **DrugZ Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gDZ.csv` (if run)
+-   **DrugZ Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>_gDZ.csv` (if run)
 -   **QC Plots**: `<output_dir>/<experiment_name>/qc/<plot_name>.html` (if run) 
