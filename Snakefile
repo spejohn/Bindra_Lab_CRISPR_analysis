@@ -425,7 +425,10 @@ rule run_fastqc_per_sample:
         use_apptainer=config["use_apptainer"],
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "fastqc_{sample}.log",
-    threads: 1
+    threads: 4  # Increase default threads
+    resources:
+        mem_mb=24000, # Request 24GB memory for large FASTQ files
+        time_min=120 # Request 120 minutes (2 hours)
     run:
         if not input.fastq:
             # Raise error for missing required input
@@ -454,6 +457,7 @@ rule run_fastqc_per_sample:
                     fastq_path=str(input.fastq),
                     output_dir=params.output_dir,
                     use_apptainer=params.use_apptainer,
+                    threads=threads # Pass threads value from rule
                 )
                 if not success:
                     # Log error and raise

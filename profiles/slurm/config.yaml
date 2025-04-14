@@ -1,0 +1,17 @@
+# profiles/slurm/config.yaml
+jobs: 100
+default-resources:
+  - mem_mb=4000 # Default 4GB RAM
+  - time_min=60   # Default 1 hour runtime
+cluster: >-
+  sbatch
+  --cpus-per-task={threads}
+  --mem={resources.mem_mb}M
+  --time=$(printf '%02d:%02d:00' $(({resources.time_min:-60}/60)) $(({resources.time_min:-60}%60)))
+  --job-name=sm.{rule}.{wildcards}
+  --output=logs/{rule}.{wildcards}.out
+  --error=logs/{rule}.{wildcards}.err
+# --- ADD YOUR CLUSTER SPECIFIC OPTIONS BELOW ---
+# --partition=<your_partition_name>  # e.g., --partition=compute
+# --account=<your_account_name>    # e.g., --account=project_abc
+# --------------------------------------------- 

@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 def run_fastqc(
     fastq_path: str,
     output_dir: str,
+    threads: int = 1,
     use_apptainer: bool = True,
     container_image: str = DEFAULT_FASTQC_IMAGE,
     timeout: int = 1800 # 30 minutes timeout for FastQC
@@ -35,6 +36,7 @@ def run_fastqc(
     Args:
         fastq_path: Path to the input FASTQ file (.fastq.gz or .fq.gz).
         output_dir: Directory where FastQC results should be saved.
+        threads: Number of threads for FastQC to use.
         use_apptainer: Whether to prioritize Apptainer for execution.
         container_image: Container image URI (Apptainer SIF or Docker URI).
         timeout: Execution timeout in seconds.
@@ -42,7 +44,7 @@ def run_fastqc(
     Returns:
         Tuple (success_boolean, output_report_path_or_error_message).
     """
-    logger.info(f"Running FastQC on {fastq_path}")
+    logger.info(f"Running FastQC on {fastq_path} using {threads} threads")
     fastq_file = Path(fastq_path)
     host_fastq_dir = fastq_file.parent.resolve()
     host_output_dir = Path(output_dir).resolve()
@@ -65,8 +67,8 @@ def run_fastqc(
     command_list = [
         "fastqc",
         container_fastq_path,
-        "-o", container_output_dir
-        # Add other FastQC options if needed, e.g., --threads
+        "-o", container_output_dir,
+        "--threads", str(threads)
     ]
 
     exit_code, output = execute_in_container(

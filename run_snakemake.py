@@ -12,6 +12,7 @@ import argparse
 import logging
 import subprocess
 from pathlib import Path
+import shlex # Import shlex for safer command splitting
 
 def setup_logging():
     """Configure basic logging for the script."""
@@ -62,22 +63,23 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run CRISPR analysis pipeline using Snakemake")
     
     # Input/output arguments
-    parser.add_argument("input_dir", help="Directory containing CRISPR screen data")
-    parser.add_argument("-o", "--output-dir", help="Directory for results (default: at same level as input_dir, named 'crispr_analysis_pipeline_results')")
+    parser.add_argument("base_dir", help="Base directory containing experiment subdirectories") # Changed from input_dir for clarity
+    parser.add_argument("-o", "--output-dir", help="Directory for results (default: 'crispr_analysis_pipeline_results' in parent of base_dir)")
     
     # Workflow control
-    parser.add_argument("--configfile", help="Path to Snakemake config file")
+    parser.add_argument("--target_experiments", nargs='+', help="List of specific experiment directory names within base_dir to process (default: all)") # New argument
+    # parser.add_argument("--configfile", help="Path to Snakemake config file") # Removed - prefer dynamic config
     parser.add_argument("-j", "--cores", type=int, 
-                        help=f"Number of CPU cores to use (default: auto-detected {default_cores} cores, override with -j or CRISPR_MAX_CORES env variable)")
+                        help=f"Number of CPU cores for Snakemake scheduler (default: auto-detected {default_cores} cores, override with -j or CRISPR_MAX_CORES env variable)")
+    parser.add_argument("--profile", help="Path to Snakemake profile directory for cluster execution") # New argument
     parser.add_argument("--dryrun", action="store_true", help="Show what would be done without executing")
     
-    # Analysis options
+    # Analysis options (passed via --config)
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
     
-    # Snakemake parameters
-    parser.add_argument("--snakemake-args", help="Additional arguments to pass to Snakemake", default="")
+    # parser.add_argument("--snakemake-args", help="Additional arguments to pass to Snakemake", default="") # Removed - prefer explicit args
     
     return parser.parse_args()
 
@@ -94,66 +96,77 @@ def run_snakemake(args):
     # Set default output directory if not specified
     output_dir = args.output_dir
     if not output_dir:
-        # Get the parent directory of the input directory for the same level
-        input_parent = os.path.dirname(os.path.abspath(args.input_dir))
-        output_dir = os.path.join(input_parent, "crispr_analysis_pipeline_results")
-    
-    # Set default config file if not specified
-    configfile = args.configfile
-    if not configfile:
-        default_config = script_dir / "config.yaml"
-        if default_config.exists():
-            configfile = str(default_config)
-    
-    # Determine number of cores to use
+        # Place results next to the base directory
+        base_dir_path = Path(args.base_dir).resolve()
+        # Use the original default logic
+        output_dir = base_dir_path.parent / "crispr_analysis_pipeline_results"
+
+    # Determine number of cores to use for Snakemake scheduler
     cores = args.cores if args.cores is not None else get_available_cores()
-    logging.info(f"Using {cores} CPU cores for execution")
+    logging.info(f"Using {cores} CPU cores for Snakemake scheduler")
     
-    # Build Snakemake command as a single string for direct shell execution
+    # Build Snakemake command parts (as a list for better handling)
     cmd_parts = [
         "snakemake",
-        f"-s {str(snakefile)}",  # Snakefile path
-        f"-j {cores}",  # Number of cores
-    ]
-    
-    # Add config file if specified
-    if configfile:
-        cmd_parts.append(f"--configfile {configfile}")
-    
-    # Add config parameters
-    cmd_parts.extend([
-        "--config",
-        f"input_dir={args.input_dir}",
+        "-s", str(snakefile),  # Snakefile path
+        "-j", str(cores),      # Number of scheduler cores/jobs (distinct from rule threads for cluster)
+        "--config", # Start config definitions
+        f"base_dir={args.base_dir}", # Pass base_dir
         f"output_dir={output_dir}",
         f"skip_drugz={str(args.skip_drugz).lower()}",
         f"skip_qc={str(args.skip_qc).lower()}",
         f"skip_mle={str(args.skip_mle).lower()}",
-        f"use_docker=true"  # Always use Docker
-    ])
+        f"use_apptainer=true" # Align with Snakefile default
+    ]
     
+    # Add target experiments if specified - use target_screens key for Snakefile
+    if args.target_experiments:
+        # Format as a Python list string for Snakemake config
+        target_list_str = "[" + ",".join(f"'{exp}'" for exp in args.target_experiments) + "]"
+        cmd_parts.append(f"target_screens={target_list_str}")
+    else:
+        # Pass None explicitly if not provided, so Snakefile default applies
+         cmd_parts.append(f"target_screens=None")
+
+
+    # Add profile if specified
+    if args.profile:
+        cmd_parts.extend(["--profile", args.profile])
+        # If using profile, --cores usually refers to scheduler cores on head node, 
+        # profile handles cluster core requests via {threads}/{resources}.
+        # Consider removing -j or setting it low if profile manages jobs. The profile's 'jobs:' key often controls this.
+        logging.info(f"Using profile: {args.profile}. Ensure profile config handles job limits and resource allocation.")
+        
     # Add dryrun if specified
     if args.dryrun:
         cmd_parts.append("--dryrun")
-    
-    # Always add unlock (no longer an option)
-    cmd_parts.append("--unlock")
-    
-    # Add additional Snakemake arguments
-    if args.snakemake_args:
-        cmd_parts.append(args.snakemake_args)
-    
-    # Join the command parts
-    cmd = " ".join(cmd_parts)
+        
+    # Join the command parts into a string
+    cmd = " ".join(shlex.quote(part) for part in cmd_parts) # Use shlex.quote for safety 
     
     # Run Snakemake
     logging.info(f"Running command: {cmd}")
     try:
-        # Using shell=True to avoid module import issues
-        result = subprocess.run(cmd, shell=True, check=True)
-        return result.returncode
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Snakemake failed with error code {e.returncode}")
-        return e.returncode
+        # Using shell=True for simplicity here, but consider direct execution with list if needed
+        # Capture output for logging
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout, stderr = process.communicate()
+        
+        if process.returncode == 0:
+            logging.info("Snakemake finished successfully.")
+            if stdout:
+                 logging.info("Snakemake stdout:\n" + stdout)
+            if stderr:
+                 logging.warning("Snakemake stderr:\n" + stderr) # Log stderr as warning even on success
+            return 0
+        else:
+            logging.error(f"Snakemake failed with error code {process.returncode}")
+            if stdout:
+                 logging.error("Snakemake stdout:\n" + stdout)
+            if stderr:
+                 logging.error("Snakemake stderr:\n" + stderr)
+            return process.returncode
+
     except Exception as e:
         logging.error(f"Error running Snakemake: {str(e)}")
         return 1
@@ -163,11 +176,16 @@ def main():
     setup_logging()
     args = parse_args()
     
-    # Check if input directory exists
-    if not os.path.exists(args.input_dir):
-        logging.error(f"Input directory {args.input_dir} does not exist")
+    # Check if base directory exists
+    if not os.path.isdir(args.base_dir):
+        logging.error(f"Base directory {args.base_dir} does not exist or is not a directory")
         return 1
-    
+        
+    # Check profile directory if specified
+    if args.profile and not os.path.isdir(args.profile):
+         logging.error(f"Profile directory {args.profile} does not exist or is not a directory")
+         return 1
+
     # Run Snakemake
     return run_snakemake(args)
 
