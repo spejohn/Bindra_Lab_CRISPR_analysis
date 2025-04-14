@@ -229,7 +229,8 @@ def run_docker_container(
     volumes: Dict[str, Dict[str, str]],
     image: str = DOCKER_IMAGE,
     timeout: int = DOCKER_RUN_TIMEOUT,
-    stream_logs: bool = True
+    stream_logs: bool = True,
+    working_dir: Optional[str] = None
 ) -> Tuple[int, str]:
     """
     Run a Docker container with the specified command and volumes.
@@ -240,6 +241,7 @@ def run_docker_container(
         image: Docker image to use
         timeout: Timeout in seconds
         stream_logs: Whether to stream logs to the console
+        working_dir: Optional path inside the container to set as the working directory.
         
     Returns:
         Tuple of (exit_code, output)
@@ -280,7 +282,9 @@ def run_docker_container(
             volumes=volumes,
             detach=True,
             remove=False,  # Keep container for inspection on error
-            restart_policy=DOCKER_RESTART_POLICY
+            restart_policy=DOCKER_RESTART_POLICY,
+            working_dir=working_dir,
+            environment={"PYTHONUNBUFFERED": "1"}
         )
         
         # Stream logs if requested

@@ -97,53 +97,57 @@ The pipeline supports multiple input directory structures, depending on your dat
 
 ## Output Directory Structure
 
-The pipeline creates a standardized directory structure with flattened organization for better clarity:
+The pipeline creates a standardized directory structure:
 
 ```
 <output_dir>/
-├── <experiment_name>/                      # Main experiment directory (or <experiment_name>_FASTQ/ or <experiment_name>_RC/)
-│   ├── <experiment_name>.count             # Merged count file for the entire experiment
-│   ├── <experiment_name>.log               # Log file for the entire experiment
-│   ├── <experiment_name>_samples.txt       # Sample sheet for the experiment
-│   │
-│   ├── <contrast_name1>/                   # First contrast directory
-│   │   ├── <contrast_name1>_RRA.gene_summary.txt     # MAGeCK RRA results
-│   │   ├── <contrast_name1>_gMGK.csv                 # MAGeCK RRA results in CSV format
-│   │   ├── <contrast_name1>_MLE.gene_summary.txt     # MAGeCK MLE results (when applicable)
-│   │   ├── <contrast_name1>_gMLE.csv                 # MAGeCK MLE results in CSV format
-│   │   ├── <contrast_name1>_DrugZ.txt                # DrugZ results
-│   │   └── <contrast_name1>_gDZ.csv                  # DrugZ results in CSV format
-│   │
-│   ├── <contrast_name2>/                   # Second contrast directory
-│   │   ├── <contrast_name2>_RRA.gene_summary.txt
-│   │   ├── <contrast_name2>_gMGK.csv
+├── <experiment_name>/                      # Main experiment directory
+│   ├── <experiment_name>.count             # Merged count file for the experiment
+│   ├── <experiment_name>_final.count.txt   # Final count table used for analysis
+│   ├── contrasts.txt                     # Converted contrasts file used for analysis
+│   ├── design_matrix.txt                 # Converted design matrix (if applicable)
+│   ├── logs/                             # Directory for Snakemake rule logs
+│   │   └── ...
+│   ├── counts/                           # Intermediate counts per sample (if FASTQ input)
 │   │   └── ...
 │   │
-│   └── qc/                                 # Quality control plots and reports
+│   ├── <contrast_name1>/                   # First contrast directory
+│   │   ├── analysis_results/             # Native tool outputs
+│   │   │   ├── <contrast_name1>_RRA.gene_summary.txt
+│   │   │   ├── <contrast_name1>_RRA.sgrna_summary.txt
+│   │   │   ├── <contrast_name1>_MLE.gene_summary.txt     # (If MLE run)
+│   │   │   ├── <contrast_name1>_MLE.sgrna_summary.txt    # (If MLE run)
+│   │   │   ├── <contrast_name1>_MLE.beta_coefficients.txt # (If MLE run)
+│   │   │   └── <contrast_name1>_DrugZ.txt                # (If DrugZ run)
+│   │   │   
+│   │   ├── <contrast_name1>_gMGK.csv      # Converted RRA results (CSV)
+│   │   ├── <contrast_name1>_gMLE.csv      # Converted MLE results (CSV, if run)
+│   │   └── <contrast_name1>_gDZ.csv       # Converted DrugZ results (CSV, if run)
+│   │
+│   ├── <contrast_name2>/                   # Second contrast directory
+│   │   └── ... (similar structure)
+│   │
+│   └── qc/                                 # Quality control plots and reports (if run)
+│       ├── <sample1>_fastqc.html         # (If FASTQ input & QC run)
+│       ├── <sample1>_fastqc.zip          # (If FASTQ input & QC run)
+│       ├── ...
+│       ├── <experiment_name>_sgrna_distribution.html
+│       ├── <experiment_name>_gene_distribution.html
+│       └── <experiment_name>_gini_index.html
 ```
 
-When processing both FASTQ and count files, separate experiment directories are created:
-
-```
-<output_dir>/
-├── <experiment_name>_FASTQ/                # Results from FASTQ file analysis
-│   ├── <experiment_name>_FASTQ.count
-│   ├── <experiment_name>_FASTQ.log
-│   ├── <experiment_name>_FASTQ_samples.txt
-│   └── ...
-│
-├── <experiment_name>_RC/                   # Results from read count file analysis
-│   ├── <experiment_name>_RC.count
-│   ├── <experiment_name>_RC.log
-│   ├── <experiment_name>_RC_samples.txt
-│   └── ...
-```
+When processing both FASTQ and count files (if supported in future), separate experiment directories might be created, e.g. `<experiment_name>_FASTQ/` and `<experiment_name>_RC/`. The current implementation focuses on a single output directory per input experiment directory.
 
 ### File Naming Conventions
 
--   **Log files**: `<experiment_name>.log`
--   **Sample sheets**: `<experiment_name>_samples.txt`
--   **Count files**: `<experiment_name>.count`
--   **RRA results**: `<contrast_name>_RRA.gene_summary.txt` and `<contrast_name>_gMGK.csv`
--   **MLE results**: `<contrast_name>_MLE.gene_summary.txt` and `<contrast_name>_gMLE.csv`
--   **DrugZ results**: `<contrast_name>_DrugZ.txt` and `<contrast_name>_gDZ.csv` 
+-   **Log files**: `<output_dir>/<experiment_name>/logs/<rule_name>_{wildcards}.log`
+-   **Final Count file**: `<output_dir>/<experiment_name>/{experiment_name}_final.count.txt`
+-   **Converted Contrasts**: `<output_dir>/<experiment_name>/contrasts.txt`
+-   **Converted Design Matrix**: `<output_dir>/<experiment_name>/design_matrix.txt`
+-   **RRA Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_RRA.gene_summary.txt`
+-   **RRA Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gMGK.csv`
+-   **MLE Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_MLE.gene_summary.txt` (if run)
+-   **MLE Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gMLE.csv` (if run)
+-   **DrugZ Results (Native)**: `<output_dir>/<experiment_name>/<contrast_name>/analysis_results/<contrast_name>_DrugZ.txt` (if run)
+-   **DrugZ Results (Converted)**: `<output_dir>/<experiment_name>/<contrast_name>/<contrast_name>_gDZ.csv` (if run)
+-   **QC Plots**: `<output_dir>/<experiment_name>/qc/<plot_name>.html` (if run) 

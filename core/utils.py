@@ -11,6 +11,7 @@ import functools
 import logging
 from typing import Optional, Dict, List, Any, Callable, Union
 import subprocess
+import psutil
 
 # Retry decorator for operations that might fail temporarily
 def retry_operation(max_attempts: int = 3, delay: int = 5, 
@@ -150,7 +151,6 @@ def get_system_info() -> Dict[str, str]:
     
     try:
         # Try to get memory info
-        import psutil
         mem = psutil.virtual_memory()
         info['memory_total'] = f"{mem.total / (1024**3):.1f} GB"
         info['memory_available'] = f"{mem.available / (1024**3):.1f} GB"

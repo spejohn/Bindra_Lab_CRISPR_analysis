@@ -23,4 +23,11 @@ services:
       - ${DESIGN_DIR:-./design}:/design
       - ${OUTPUT_DIR:-./output}:/output
     working_dir: /app
-    command: ["python", "/drugz/drugz.py", "--help"] 
+    command: ["python", "/drugz/drugz.py", "--help"]
+
+  fastqc:
+    build:
+      context: .
+      dockerfile: dockerfiles/Dockerfile.fastqc
+    image: crispr-analysis/fastqc:latest
+    # No command needed, built for execution 

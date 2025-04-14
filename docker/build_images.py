@@ -60,7 +60,7 @@ def build_docker_images(pull: bool = False, no_cache: bool = False) -> bool:
         logger.debug(result.stdout)
         
         # Verify the images were built
-        images = ["crispr-analysis/mageck:latest", "crispr-analysis/drugz:latest"]
+        images = ["crispr-analysis/mageck:latest", "crispr-analysis/drugz:latest", "crispr-analysis/fastqc:latest"]
         missing_images = []
         
         for image in images:

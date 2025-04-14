@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Set, List, Dict, Any, Optional, Union
 
-from analysis_pipeline.core.config import (
+from core.config import (
     CONTRAST_TABLE_PATTERN,
     READ_COUNT_PATTERN,
     FASTQ_PATTERNS,
@@ -18,7 +18,7 @@ from analysis_pipeline.core.config import (
     DESIGN_MATRIX_PATTERN,
     CONTRAST_REQUIRED_COLUMNS
 )
-from analysis_pipeline.core.utils import retry_operation
+from core.utils import retry_operation
 
 # Define patterns
 DESIGN_MATRIX_PATTERN = "*.txt"
@@ -542,48 +542,78 @@ def identify_analyzed_experiments(output_dir: str) -> Dict[str, Dict[str, bool]]
 
 def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
     """
-    Convert analysis results (RRA or DrugZ) to CSV format with appropriate suffix.
+    Convert analysis results (RRA, MLE, or DrugZ) to CSV format.
+    Selects relevant columns and ensures basic format consistency.
     
     Args:
-        result_file: Path to the result file (tab-delimited)
-        analysis_type: Type of analysis ('RRA' or 'DrugZ')
+        result_file: Path to the result file (tab-delimited text output from tool).
+        analysis_type: Type of analysis ('RRA', 'MLE', or 'DrugZ').
         
     Returns:
-        Path to the created CSV file
+        Path to the created CSV file.
+
+    Raises:
+        ValueError: If analysis_type is unrecognized or input file is invalid.
+        Exception: Re-raises exceptions during file reading or writing.
     """
+    logger = logging.getLogger(__name__)
+    result_path = Path(result_file)
+    analysis_upper = analysis_type.upper()
+    logger.info(f"Converting {analysis_upper} results file {result_file} to CSV.")
+
+    if not result_path.is_file():
+        raise FileNotFoundError(f"Input result file not found: {result_file}")
+
+    # Determine suffix and expected key columns based on analysis type
+    if analysis_upper == 'RRA':
+        suffix = '_gMGK'
+        # Typical RRA columns: id, ... LFC, p-value, FDR
+        # Let's just ensure 'id' (gene ID) is present
+        required_col = 'id' 
+    elif analysis_upper == 'MLE':
+        suffix = '_gMLE'
+        # Typical MLE columns: Gene, ... beta, p-value, FDR
+        required_col = 'Gene' 
+    elif analysis_upper == 'DRUGZ':
+        suffix = '_gDZ'
+        # Typical DrugZ columns: Gene, ... normZ, pvalue, FDR
+        required_col = 'Gene' 
+    else:
+        raise ValueError(f"Unrecognized analysis_type for CSV conversion: {analysis_type}")
+    
+    # Create new filename with appropriate suffix
+    result_dir = result_path.parent
+    # Clean up potential existing suffixes in the base name
+    base_name = result_path.stem
+    for old_suffix in ['.gene_summary', '.drugz', '_RRA', '_MLE', '_DrugZ']:
+        if old_suffix in base_name:
+            base_name = base_name.replace(old_suffix, '')
+    
+    csv_file_path = result_dir / f"{base_name}{suffix}.csv"
+    
     try:
-        # Determine suffix based on analysis type
-        if analysis_type.upper() == 'RRA':
-            suffix = '_gMGK'
-        elif analysis_type.upper() == 'DRUGZ':
-            suffix = '_gDZ'
-        else:
-            suffix = f'_{analysis_type}'
+        # Read the tab-delimited file, skipping potential comment lines
+        df = pd.read_csv(result_file, sep='\t', comment='#')
         
-        # Get the base name and directory
-        result_path = Path(result_file)
-        result_dir = result_path.parent
+        # Basic validation: Check if the expected key column exists
+        if required_col not in df.columns:
+             raise ValueError(f"Required column '{required_col}' not found in {result_file}. Found: {df.columns.tolist()}")
+
+        # Select all columns (as per user request - no specific selection/renaming)
+        # df_to_save = df[relevant_columns] 
+        df_to_save = df
         
-        # Create new filename with appropriate suffix
-        # Remove old suffix if present
-        base_name = result_path.stem
-        for old_suffix in ['_RRA', '_DrugZ', '.gene_summary']:
-            if old_suffix in base_name:
-                base_name = base_name.replace(old_suffix, '')
+        # Save as CSV
+        df_to_save.to_csv(csv_file_path, index=False)
         
-        csv_file = os.path.join(result_dir, f"{base_name}{suffix}.csv")
+        logger.info(f"Converted {result_file} to CSV format: {csv_file_path}")
         
-        # Read the tab-delimited file and convert to CSV
-        df = pd.read_csv(result_file, sep='\t')
-        df.to_csv(csv_file, index=False)
-        
-        logging.info(f"Converted {result_file} to CSV format: {csv_file}")
-        
-        return csv_file
+        return str(csv_file_path)
     
     except Exception as e:
-        logging.error(f"Error converting {result_file} to CSV: {str(e)}")
-        return result_file
+        logger.error(f"Error converting {result_file} to CSV: {str(e)}")
+        # Re-raise the exception to signal failure
+        raise Exception(f"Failed to convert {result_file} to CSV.") from e
 
 
 @retry_operation(max_attempts=3, delay=2)
@@ -626,4 +656,75 @@ def copy_file(src_path, dest_path):
         logging.error(f"Error copying file from {src_path} to {dest_path}: {str(e)}")
         logging.error(f"Source file exists: {os.path.exists(src_path)}")
         logging.error(f"Destination directory exists: {os.path.exists(os.path.dirname(dest_path))}")
-        raise 
+        raise
+
+
+def parse_contrasts(contrasts_txt_path: str) -> List[Dict[str, Union[str, List[str]]]]:
+    """
+    Parses a tab-delimited contrasts file into a list of dictionaries.
+
+    Expected format (tab-delimited):
+    contrast   control         treatment
+    exp1_trt   ctrl1,ctrl2     trt1,trt2
+    exp2_ko    wt1             ko1,ko2
+
+    Args:
+        contrasts_txt_path: Path to the tab-delimited contrast file.
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a contrast:
+        [{'name': 'exp1_trt', 'control': ['ctrl1','ctrl2'], 'treatment': ['trt1','trt2']},
+         {'name': 'exp2_ko', 'control': ['wt1'], 'treatment': ['ko1','ko2']}]
+
+    Raises:
+        ValueError: If the file format is incorrect or missing required columns.
+        FileNotFoundError: If the file does not exist.
+    """
+    logger = logging.getLogger(__name__)
+    file_path = Path(contrasts_txt_path)
+
+    if not file_path.is_file():
+        raise FileNotFoundError(f"Contrast file not found: {contrasts_txt_path}")
+
+    try:
+        df = pd.read_csv(file_path, sep='\t')
+        logger.info(f"Read contrasts file {file_path} with columns: {df.columns.tolist()}")
+
+        # Check required columns (case sensitive for exact match after conversion)
+        required = ['contrast', 'control', 'treatment']
+        if not all(col in df.columns for col in required):
+            raise ValueError(f"Contrasts file {contrasts_txt_path} must contain columns: {required}. Found: {df.columns.tolist()}")
+
+        parsed_contrasts = []
+        for index, row in df.iterrows():
+            contrast_name = str(row['contrast']).strip()
+            # Split comma-separated samples, strip whitespace, remove empty strings
+            control_samples = [s.strip() for s in str(row['control']).split(',') if s.strip()]
+            treatment_samples = [s.strip() for s in str(row['treatment']).split(',') if s.strip()]
+
+            if not contrast_name:
+                logger.warning(f"Skipping row {index} in {contrasts_txt_path} due to empty contrast name.")
+                continue
+            if not control_samples:
+                logger.warning(f"Skipping contrast '{contrast_name}' in {contrasts_txt_path} due to empty control samples.")
+                continue
+            if not treatment_samples:
+                logger.warning(f"Skipping contrast '{contrast_name}' in {contrasts_txt_path} due to empty treatment samples.")
+                continue
+
+            parsed_contrasts.append({
+                'name': contrast_name,
+                'control': control_samples,
+                'treatment': treatment_samples
+            })
+
+        if not parsed_contrasts:
+             logger.warning(f"No valid contrasts found in {contrasts_txt_path}")
+
+        logger.info(f"Successfully parsed {len(parsed_contrasts)} contrasts from {contrasts_txt_path}")
+        return parsed_contrasts
+
+    except Exception as e:
+        logger.error(f"Error parsing contrasts file {contrasts_txt_path}: {e}")
+        # Re-raise exception after logging
+        raise ValueError(f"Error parsing contrasts file {contrasts_txt_path}: {e}") from e 

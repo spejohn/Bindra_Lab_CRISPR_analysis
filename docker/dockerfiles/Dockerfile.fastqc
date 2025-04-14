@@ -1,0 +1,30 @@
+# Use an official OpenJDK runtime as a parent image (FastQC needs Java)
+FROM openjdk:11-jre-slim
+
+# Set environment variables for FastQC version and download URL
+# Find latest version at: https://www.bioinformatics.babraham.ac.uk/projects/fastqc/
+ENV FASTQC_VERSION=0.12.1
+ENV FASTQC_URL=https://www.bioinformatics.babraham.ac.uk/projects/fastqc/fastqc_v${FASTQC_VERSION}.zip
+
+# Install necessary dependencies (wget to download, unzip) and clean up
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install FastQC
+WORKDIR /opt
+RUN wget ${FASTQC_URL} \
+    && unzip fastqc_v${FASTQC_VERSION}.zip \
+    && rm fastqc_v${FASTQC_VERSION}.zip \
+    && chmod +x FastQC/fastqc
+
+# Add FastQC directory to PATH
+ENV PATH="/opt/FastQC:${PATH}"
+
+# Set a working directory (optional, can be overridden)
+WORKDIR /data
+
+# Default command (optional, shows help if container is run directly)
+# CMD ["fastqc", "--help"] 

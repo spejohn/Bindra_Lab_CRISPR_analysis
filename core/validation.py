@@ -9,7 +9,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional, Dict, List, Union, Tuple, Set
 
-from analysis_pipeline.core.config import (
+from core.config import (
     LIBRARY_REQUIRED_COLUMNS,
     CONTRAST_REQUIRED_COLUMNS,
     SAMPLE_SHEET_COLUMNS,
@@ -285,4 +285,118 @@ def check_existing_files(input_dir: str, output_dir: str) -> Set[str]:
         logging.error(f"Error checking existing files: {str(e)}")
     
     logging.info(f"Found {len(analyzed_files)} previously analyzed files")
-    return analyzed_files 
+    return analyzed_files
+
+
+def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, bool, List[str]]]:
+    """
+    Checks the existence and basic structure of required files within an experiment directory.
+
+    Args:
+        experiment_dir: Path to the experiment directory.
+
+    Returns:
+        A dictionary summarizing findings:
+        {'status': 'valid',
+         'data_type': 'fastq' or 'rc',
+         'contrasts_path': path_to_contrasts.csv,
+         'library_path': path_to_library.csv or None,
+         'rc_path': path_to_rc_file or None,
+         'design_matrix_path': path_to_design_matrix.csv or None,
+         'fastq_dir': path_to_fastq_dir or None,
+         'fastq_files': list_of_fastq_files or None,
+         'mle_possible': True or False}
+
+    Raises:
+        ValueError: If the directory structure is invalid or missing required files.
+    """
+    logger = logging.getLogger(__name__)
+    exp_path = Path(experiment_dir)
+    logger.info(f"Validating structure of experiment directory: {exp_path}")
+
+    if not exp_path.is_dir():
+        raise ValueError(f"Experiment directory not found: {experiment_dir}")
+
+    # --- Check for required contrasts file --- 
+    # Allow for .csv or .txt initially, conversion handled later
+    contrasts_files = list(exp_path.glob("contrasts.csv")) + list(exp_path.glob("contrasts.txt"))
+    if not contrasts_files:
+        raise ValueError(f"Missing required contrasts file (contrasts.csv or contrasts.txt) in {experiment_dir}")
+    if len(contrasts_files) > 1:
+        logger.warning(f"Multiple contrast files found in {experiment_dir}, using {contrasts_files[0]}")
+    contrasts_path = str(contrasts_files[0])
+    logger.info(f"Found contrasts file: {contrasts_path}")
+
+    # --- Check for data type (FASTQ or RC) --- 
+    fastq_dir = exp_path / "fastq"
+    # Look for read count files (e.g., *_rc.csv, experiment_counts.csv)
+    rc_files = list(exp_path.glob("*_rc.csv")) + list(exp_path.glob("experiment_counts.csv"))
+
+    has_fastq = fastq_dir.is_dir()
+    has_rc = bool(rc_files)
+
+    data_type = None
+    library_path = None
+    rc_path = None
+    fastq_dir_path = None
+    fastq_files_list = None
+
+    if has_fastq:
+        data_type = "fastq"
+        fastq_dir_path = str(fastq_dir)
+        fastq_files_list = [str(f) for f in fastq_dir.glob("*.fastq.gz")] + \
+                           [str(f) for f in fastq_dir.glob("*.fq.gz")]
+        if not fastq_files_list:
+             raise ValueError(f"fastq directory found in {experiment_dir}, but it contains no .fastq.gz or .fq.gz files.")
+        logger.info(f"Found fastq data directory: {fastq_dir_path} with {len(fastq_files_list)} fastq.gz/fq.gz files.")
+
+        # Library file is required for FASTQ
+        library_files = list(exp_path.glob("library.csv"))
+        if not library_files:
+            raise ValueError(f"Missing required library file (library.csv) for FASTQ processing in {experiment_dir}")
+        if len(library_files) > 1:
+             logger.warning(f"Multiple library files found in {experiment_dir}, using {library_files[0]}")
+        library_path = str(library_files[0])
+        logger.info(f"Found library file: {library_path}")
+
+        if has_rc:
+            logger.warning(f"Both fastq directory and read count file(s) ({[str(f) for f in rc_files]}) found in {experiment_dir}. Prioritizing fastq for analysis type determination.")
+            # Decide on priority or specific handling TBD - for now, just note it.
+
+    elif has_rc:
+        data_type = "rc"
+        if len(rc_files) > 1:
+            logger.warning(f"Multiple read count files found in {experiment_dir}, using {rc_files[0]}")
+        rc_path = str(rc_files[0])
+        logger.info(f"Found read count file: {rc_path}")
+    else:
+        raise ValueError(f"Missing data files in {experiment_dir}. Expected either a 'fastq/' subdirectory or a '*_rc.csv'/'experiment_counts.csv' file.")
+
+    # --- Check for optional design matrix --- 
+    # Allow for .csv or .txt initially
+    design_files = list(exp_path.glob("design_matrix.csv")) + list(exp_path.glob("design_matrix.txt"))
+    design_matrix_path = None
+    mle_possible = False
+    if design_files:
+        if len(design_files) > 1:
+             logger.warning(f"Multiple design matrix files found in {experiment_dir}, using {design_files[0]}")
+        design_matrix_path = str(design_files[0])
+        mle_possible = True
+        logger.info(f"Found design matrix file: {design_matrix_path} (MLE possible)")
+    else:
+        logger.info(f"No design matrix file found in {experiment_dir} (MLE not possible).")
+
+    # --- Return summary --- 
+    validation_summary = {
+        'status': 'valid',
+        'data_type': data_type,
+        'contrasts_path': contrasts_path,
+        'library_path': library_path,
+        'rc_path': rc_path,
+        'design_matrix_path': design_matrix_path,
+        'fastq_dir': fastq_dir_path,
+        'fastq_files': fastq_files_list,
+        'mle_possible': mle_possible
+    }
+    logger.info(f"Validation summary for {experiment_dir}: {validation_summary}")
+    return validation_summary 
