@@ -1362,9 +1362,9 @@ rule generate_qc_report:
                         "fastqc_reports": [
                             str(f) for f in input.fastqc_reports if Path(f).exists()
                         ],
-                    }
+            }
 
-                    print(
+            print(
                 "--> Placeholder rule: generate_qc_report() function would be called here with:"
             )
             print(input_files_dict)

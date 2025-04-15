@@ -318,12 +318,21 @@ def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, b
         raise ValueError(f"Experiment directory not found: {experiment_dir}")
 
     # --- Check for required contrasts file --- 
-    # Allow for .csv or .txt initially, conversion handled later
-    contrasts_files = list(exp_path.glob("contrasts.csv")) + list(exp_path.glob("contrasts.txt"))
+    # Allow for flexible naming patterns (*contrasts.csv/txt, *_cnttbl.csv/txt)
+    contrast_patterns = ["*contrasts.csv", "*_cnttbl.csv", "*contrasts.txt", "*_cnttbl.txt"]
+    contrasts_files = []
+    for pattern in contrast_patterns:
+        contrasts_files.extend(list(exp_path.glob(pattern)))
+    
+    # Filter out directories if any match the pattern (glob can sometimes include dirs)
+    contrasts_files = [f for f in contrasts_files if f.is_file()]
+
     if not contrasts_files:
-        raise ValueError(f"Missing required contrasts file (contrasts.csv or contrasts.txt) in {experiment_dir}")
+        raise ValueError(f"Missing required contrasts file (matching patterns: {contrast_patterns}) in {experiment_dir}")
     if len(contrasts_files) > 1:
-        logger.warning(f"Multiple contrast files found in {experiment_dir}, using {contrasts_files[0]}")
+        # Sort for deterministic selection if multiple found
+        contrasts_files.sort()
+        logger.warning(f"Multiple contrast files found matching patterns in {experiment_dir}. Using the first one: {contrasts_files[0]}")
     contrasts_path = str(contrasts_files[0])
     logger.info(f"Found contrasts file: {contrasts_path}")
 
