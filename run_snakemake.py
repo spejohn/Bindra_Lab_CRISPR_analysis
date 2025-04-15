@@ -133,26 +133,11 @@ def run_snakemake(args):
         # Pass None explicitly if not provided, so Snakefile default applies
          cmd_parts.append(f"target_screens=None")
 
-    # Define the cluster command using the submission script
-    # Note: {placeholders} are filled by Snakemake *after* cli parsing
-    cluster_cmd = (
-        "./profiles/slurm/slurm-submit.sh "
-        "--cpus-per-task={threads} "
-        "--mem={resources.mem_mb} "
-        "--time={resources.time_min} "
-        "--job-name=sm.{rule}.{wildcards} " # Pass job name info
-        "--output=logs/{rule}.{wildcards}.out " # Pass output log info
-        "--error=logs/{rule}.{wildcards}.err" # Pass error log info
-    )
-
     # Add profile if specified
     if args.profile:
         cmd_parts.extend(["--profile", args.profile])
-        # If using profile, also add the --cluster command
-        cmd_parts.extend(["--cluster", cluster_cmd]) 
-        logging.info(f"Using profile: {args.profile} with cluster command.")
-        # The profile still provides defaults for jobs, resources, etc., 
-        # but the cluster command is now passed explicitly.
+        logging.info(f"Using profile: {args.profile}")
+        # The profile config.yaml should contain the cluster config
         
     # Add containerization flag if specified
     if args.use_apptainer:

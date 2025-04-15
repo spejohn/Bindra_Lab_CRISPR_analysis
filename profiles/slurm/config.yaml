@@ -1,10 +1,21 @@
 # profiles/slurm/config.yaml
+executor: slurm
 jobs: 100
-default-resources: 
+default-resources:
   # Define default resources for rules unless overridden
-  - mem_mb=32000
-  - time_min=120
-# cluster: ... # Removed - will be passed via run_snakemake.py
+  mem_mb: 32000
+  time_min: 120
+
+# Use cluster section for submission and status scripts
+cluster:
+  submitscript: "./slurm-submit.sh"
+  # A status script is recommended but optional
+  # status: "./slurm-status.py"  # Uncomment if you implement this script
+
+# Arguments to pass to the submit script
+jobname: "sm.{rule}.{wildcards}"
+output: "{workdir}/logs/{rule}.{wildcards}.out"
+error: "{workdir}/logs/{rule}.{wildcards}.err"
 
 # Note: Partition, mail-user, mail-type are handled by defaults in slurm-submit.sh
 # You could pass them here too if needed: --partition=day --mail-user=... etc.
