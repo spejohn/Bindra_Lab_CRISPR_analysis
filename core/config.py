@@ -15,7 +15,7 @@ DEFAULT_ADJUST_METHOD = "fdr"  # Multiple testing adjustment method
 DEFAULT_FDR_THRESHOLD = 0.05  # FDR threshold for significant hits
 
 # File patterns
-FASTQ_PATTERNS = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
+FASTQ_PATTERNS = ["*.fastq.gz", "*.fq.gz"]
 CONTRAST_TABLE_PATTERN = "*contrast*.txt"
 READ_COUNT_PATTERN = "*count*"  # Generic pattern for count files regardless of extension
 COUNT_CSV_PATTERN = ["*count*.csv", "*read_count*.csv", "*_rc*.csv"]  # Specific patterns for CSV count files
@@ -25,7 +25,7 @@ RESULTS_DRUGZ_PATTERN = "*_gDZ.csv"
 DESIGN_MATRIX_PATTERN = "*design*.txt"  # New pattern for design matrix files
 
 # Required columns
-LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "gene"]
+LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "gene", "sequence"]
 CONTRAST_REQUIRED_COLUMNS = ["contrast", "treatment", "control"]
 SAMPLE_SHEET_COLUMNS = ["sample_name", "fastq_path"]
 SAMPLE_SHEET_REQUIRED_COLUMNS = ["sample", "fastq_file", "condition"]  # Adding this for test compatibility

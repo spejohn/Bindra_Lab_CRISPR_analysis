@@ -360,9 +360,9 @@ def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, b
         logger.info(f"Found fastq data directory: {fastq_dir_path} with {len(fastq_files_list)} fastq.gz/fq.gz files.")
 
         # Library file is required for FASTQ
-        library_files = list(exp_path.glob("library.csv"))
+        library_files = list(exp_path.glob("*library.csv"))
         if not library_files:
-            raise ValueError(f"Missing required library file (library.csv) for FASTQ processing in {experiment_dir}")
+            raise ValueError(f"Missing required library file (*library.csv) for FASTQ processing in {experiment_dir}")
         if len(library_files) > 1:
              logger.warning(f"Multiple library files found in {experiment_dir}, using {library_files[0]}")
         library_path = str(library_files[0])
