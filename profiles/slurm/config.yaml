@@ -1,15 +1,18 @@
 # profiles/slurm/config.yaml
 jobs: 100
-default-resources: "mem_mb=32000 time_min=120" # Try space-separated format
+default-resources: 
+  # Define default resources for rules unless overridden
+  - mem_mb=32000
+  - time_min=120
 cluster: >-
-  sbatch
-  --cpus-per-task={threads}
-  --mem={resources.mem_mb}M
-  --time=$(printf '%02d:%02d:00' $(({resources.time_min:-60}/60)) $(({resources.time_min:-60}%60)))
-  --job-name=sm.{rule}.{wildcards}
-  --output=logs/{rule}.{wildcards}.out
+  ./slurm-submit.sh 
+  --cpus-per-task={threads} 
+  --mem={resources.mem_mb} 
+  --time={resources.time_min} 
+  --job-name=sm.{rule}.{wildcards} 
+  --output=logs/{rule}.{wildcards}.out 
   --error=logs/{rule}.{wildcards}.err
-  --partition=day
-  --email=spenser.johnson@yale.edu
-  --mail-type=END,FAIL
+
+# Note: Partition, mail-user, mail-type are handled by defaults in slurm-submit.sh
+# You could pass them here too if needed: --partition=day --mail-user=... etc.
 # --------------------------------------------- 
