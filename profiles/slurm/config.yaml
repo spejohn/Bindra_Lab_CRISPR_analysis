@@ -4,14 +4,7 @@ default-resources:
   # Define default resources for rules unless overridden
   - mem_mb=32000
   - time_min=120
-cluster: >-
-  ./slurm-submit.sh 
-  --cpus-per-task={threads} 
-  --mem={resources.mem_mb} 
-  --time={resources.time_min} 
-  --job-name=sm.{rule}.{wildcards} 
-  --output=logs/{rule}.{wildcards}.out 
-  --error=logs/{rule}.{wildcards}.err
+# cluster: ... # Removed - will be passed via run_snakemake.py
 
 # Note: Partition, mail-user, mail-type are handled by defaults in slurm-submit.sh
 # You could pass them here too if needed: --partition=day --mail-user=... etc.
