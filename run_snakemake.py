@@ -108,7 +108,7 @@ def run_snakemake(args):
         output_dir = base_dir_path.parent / "crispr_analysis_pipeline_results"
 
     # Determine number of cores to use for Snakemake scheduler
-    cores = args.cores if args.cores is not None else get_available_cores()
+    cores = args.cores if args.cores is not None else 1 # can set to node default with get_available_cores()
     logging.info(f"Using {cores} CPU cores for Snakemake scheduler")
     
     # Build Snakemake command parts (as a list for better handling)

@@ -1,21 +1,21 @@
 # profiles/slurm/config.yaml
-executor: slurm
 jobs: 100
 default-resources:
   # Define default resources for rules unless overridden
   mem_mb: 32000
   time_min: 120
 
-# Use cluster section for submission and status scripts
-cluster:
-  submitscript: "./slurm-submit.sh"
-  # A status script is recommended but optional
-  # status: "./slurm-status.py"  # Uncomment if you implement this script
+# Cluster execution configuration
+cluster: "./slurm-submit.sh --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time_min} --job-name=sm.{rule}.{wildcards} --output={workdir}/logs/{rule}.{wildcards}.out --error={workdir}/logs/{rule}.{wildcards}.err"
 
-# Arguments to pass to the submit script
-jobname: "sm.{rule}.{wildcards}"
-output: "{workdir}/logs/{rule}.{wildcards}.out"
-error: "{workdir}/logs/{rule}.{wildcards}.err"
+# Optional: specify status check script if needed
+# cluster-status: "./slurm-status.py"
+
+# Wait for output files for this many seconds
+#latency-wait: 60
+
+# Keep going if some jobs fail
+keep-going: true
 
 # Note: Partition, mail-user, mail-type are handled by defaults in slurm-submit.sh
 # You could pass them here too if needed: --partition=day --mail-user=... etc.
