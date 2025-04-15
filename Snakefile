@@ -14,6 +14,7 @@ import pandas as pd  # Needed for contrast parsing
 import shutil  # Added for shutil.copy
 from types import SimpleNamespace  # Needed for mocking wildcards
 import shlex  # Added for shlex.quote
+from datetime import datetime # Import datetime
 
 # --- Core Function Imports ---
 # Assuming core modules are importable relative to Snakefile location or via PYTHONPATH
@@ -219,11 +220,11 @@ rule convert_contrasts:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
             error_msg = f"Skipping contrast conversion for {wildcards.experiment} due to validation failure: {validation_info.get('error')}"
-            print(error_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {error_msg}")
             with open(log[0], "w") as f:
                 f.write(error_msg)
         else:
-            print(f"Converting contrasts for {wildcards.experiment}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: Converting contrasts...")
             # Output dir is the experiment dir
             output_dir_path = Path(output.txt).parent
             output_dir_path.mkdir(parents=True, exist_ok=True)
@@ -237,14 +238,14 @@ rule convert_contrasts:
                     )
                 else:
                     print(
-                        f"""Input contrast file {input_csv_path} is already .txt, copying."""
+                        f"[{datetime.now()}] {wildcards.experiment}: Input contrast file {input_csv_path} is already .txt, copying."
                     )
                     shutil.copy(input_csv_path, output.txt)
             except Exception as e:
-                print(f"Error converting contrasts for {wildcards.experiment}: {e}")
+                print(f"[{datetime.now()}] ERROR converting contrasts for {wildcards.experiment}: {e}")
                 with open(log[0], "w") as f:
                     f.write(f"Error: {e}")
-                raise e  # Fail the job
+                raise e
 
 
 # --- Rule to Convert Design Matrix CSV to TXT (Conditional) ---
@@ -262,7 +263,7 @@ rule convert_design_matrix:
         if validation_info["status"] == "failed":
             # Validation failed for the experiment, just log and keep placeholder
             print(
-                f"Skipping design matrix conversion for {wildcards.experiment} due to validation failure."
+                f"[{datetime.now()}] {wildcards.experiment}: Skipping design matrix conversion due to validation failure."
             )
         elif validation_info.get("design_matrix_path"):
             # Design matrix exists, proceed with conversion
@@ -270,7 +271,7 @@ rule convert_design_matrix:
             output_dir_path = Path(output.txt).parent
             output_dir_path.mkdir(parents=True, exist_ok=True)
             if Path(input_path).suffix.lower() == ".csv":
-                print(f"Converting design matrix for {wildcards.experiment}")
+                print(f"[{datetime.now()}] {wildcards.experiment}: Converting design matrix...")
                 try:
                     convert_file_to_tab_delimited(
                         file_path=input_path,
@@ -278,19 +279,19 @@ rule convert_design_matrix:
                     )
                 except Exception as e:
                     print(
-                        f"Error converting design matrix for {wildcards.experiment}: {e}"
+                        f"[{datetime.now()}] ERROR converting design matrix for {wildcards.experiment}: {e}"
                     )
                     with open(log[0], "w") as f:
                         f.write(f"Error: {e}")
                     raise e
             else:
                 print(
-                    f"Input design matrix file {input_path} is already .txt, copying."
+                    f"[{datetime.now()}] {wildcards.experiment}: Input design matrix file {input_path} is already .txt, copying."
                 )
                 shutil.copy(input_path, output.txt)
         else:
             print(
-                f"Design matrix not found for {wildcards.experiment}, skipping conversion."
+                f"[{datetime.now()}] {wildcards.experiment}: Design matrix not found, skipping conversion."
             )
 
 
@@ -313,7 +314,7 @@ rule convert_read_count_input:
             input_rc_path = validation_info.get("rc_path")
             if input_rc_path and Path(input_rc_path).exists():
                 print(
-                    f"Converting input read count file for {wildcards.experiment}: {input_rc_path} to {output.count_txt}"
+                    f"[{datetime.now()}] {wildcards.experiment}: Converting input read count file: {input_rc_path} to {output.count_txt}"
                 )
                 Path(output.count_txt).parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -331,7 +332,7 @@ rule convert_read_count_input:
                         created_file_path.exists()
                         and created_file_path.resolve() != target_file_path.resolve()
                     ):
-                        print(f"Renaming {created_file_path} to {target_file_path}")
+                        print(f"[{datetime.now()}] {wildcards.experiment}: Renaming {created_file_path} to {target_file_path}")
                         created_file_path.rename(target_file_path)
                     elif not target_file_path.exists():
                         if not created_file_path.exists():
@@ -339,18 +340,18 @@ rule convert_read_count_input:
                             raise FileNotFoundError(
                                 f"make_count_table did not produce expected file: {created_file_path} or {target_file_path}"
                             )
-                    print(f"Read count conversion complete: {output.count_txt}")
+                    print(f"[{datetime.now()}] {wildcards.experiment}: Read count conversion complete: {output.count_txt}")
                 except Exception as e:
                     # Log error and raise
                     error_msg = f"Error converting input read count for {wildcards.experiment}: {e}"
-                    print(f"ERROR: {error_msg}")
+                    print(f"[{datetime.now()}] ERROR: {error_msg}")
                     with open(str(log), "w") as f:
                         f.write(error_msg)
                     raise e
             else:
                 # Log warning and exit cleanly (no output expected)
                 warn_msg = f"Warning: data_type is 'rc' but rc_path not found/valid for {wildcards.experiment}. Skipping conversion."
-                print(warn_msg)
+                print(f"[{datetime.now()}] {wildcards.experiment}: {warn_msg}")
                 with open(str(log), "w") as f:
                     f.write(warn_msg)
                 # No touch() needed here, exit cleanly
@@ -358,7 +359,7 @@ rule convert_read_count_input:
         else:
             # Log info and exit cleanly (no output expected)
             info_msg = f"Skipping read count conversion for {wildcards.experiment} (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # No touch() needed here, exit cleanly
@@ -503,10 +504,10 @@ rule run_mageck_count_per_sample:
         sif=MAGECK_SIF,
     output:
         # Define both expected outputs, mark summary as temporary if desired
-        count=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
+        count_txt=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
         summary=temp(OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.countsummary.txt"),
     params:
-        output_prefix=lambda wc, output: str(Path(output.count).parent / wc.sample), # e.g., output/exp1/counts/sampleA
+        output_prefix=lambda wc, output: str(Path(output.count_txt).parent / wc.sample),
         sample_name="{sample}",
         library_path=lambda wc: get_validation_info(wc.experiment).get("library_path"),
         count_options=config.get("mageck_count_options", {}), # Get options from config if needed
@@ -523,20 +524,20 @@ rule run_mageck_count_per_sample:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] != "valid" or validation_info.get("data_type") != "fastq":
             info_msg = f"Skipping MAGeCK count for {wildcards.experiment}/{wildcards.sample}: Not a valid FASTQ experiment."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {info_msg}")
             with open(str(log), "w") as f: f.write(info_msg)
             # Create dummy outputs to satisfy Snakemake if skipped
-            # touch(output.count)
+            # touch(output.count_txt)
             # touch(output.summary)
             sys.exit(0) # Exit cleanly
 
         if not params.library_path or not Path(params.library_path).exists():
             error_msg = f"ERROR: Library file not found for {wildcards.experiment}: {params.library_path}"
-            print(error_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {error_msg}")
             with open(str(log), "w") as f: f.write(error_msg)
             raise FileNotFoundError(error_msg)
 
-        print(f"Running MAGeCK count for {wildcards.experiment}/{wildcards.sample}")
+        print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: Running MAGeCK count...")
         try:
             # Ensure the output directory exists before calling the function
             Path(params.output_prefix).parent.mkdir(parents=True, exist_ok=True)
@@ -554,17 +555,17 @@ rule run_mageck_count_per_sample:
 
             if not success:
                 error_msg = f"MAGeCK count failed for {wildcards.sample}: {msg_or_path}"
-                print(f"ERROR: {error_msg}")
+                print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
                 with open(str(log), "w") as f: f.write(error_msg)
                 # Potentially touch outputs even on failure if needed by workflow logic,
                 # but raising error is usually better.
                 raise RuntimeError(error_msg)
             else:
-                print(f"MAGeCK count successful for {wildcards.sample}. Output: {msg_or_path}")
+                print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: MAGeCK count successful. Output: {msg_or_path}")
                 # Verify the expected output files were actually created by the function
-                if not Path(output.count).exists() or not Path(output.summary).exists():
-                     warn_msg = f"Warning: run_mageck_count reported success but expected output files missing ({output.count}, {output.summary})"
-                     print(warn_msg)
+                if not Path(output.count_txt).exists() or not Path(output.summary).exists():
+                     warn_msg = f"Warning: run_mageck_count reported success but expected output files missing ({output.count_txt}, {output.summary})"
+                     print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {warn_msg}")
                      with open(str(log), "a") as f: f.write(f"\n{warn_msg}")
                      # Decide if this should be a fatal error
                      # raise FileNotFoundError(warn_msg)
@@ -572,12 +573,12 @@ rule run_mageck_count_per_sample:
 
         except NameError:
             error_msg = "ERROR: run_mageck_count function not found/imported."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
             with open(str(log), "w") as f: f.write(error_msg)
             raise
         except Exception as e:
             error_msg = f"Error running MAGeCK count for {wildcards.sample}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
             with open(str(log), "w") as f: f.write(error_msg)
             raise e
 
@@ -610,11 +611,11 @@ rule aggregate_counts:
             sample_files = [str(f) for f in input.sample_counts]
             if not sample_files:
                 print(
-                    f"Warning: No sample count files found to aggregate for {wildcards.experiment}. Creating empty output."
+                    f"[{datetime.now()}] {wildcards.experiment}: Warning: No sample count files found to aggregate. Creating empty output."
                 )
             else:
                 print(
-                    f"Aggregating {len(sample_files)} sample counts for {wildcards.experiment}"
+                    f"[{datetime.now()}] {wildcards.experiment}: Aggregating {len(sample_files)} sample counts..."
                 )
                 try:
                     Path(output.agg_count_txt).parent.mkdir(parents=True, exist_ok=True)
@@ -626,7 +627,7 @@ rule aggregate_counts:
                     if not success:
                         raise RuntimeError(f"Aggregation failed: {msg}")
 
-                    print(f"Aggregation complete: {output.agg_count_txt}")
+                    print(f"[{datetime.now()}] {wildcards.experiment}: Aggregation complete: {output.agg_count_txt}")
 
                     # Delete intermediate counts directory on success
                     intermediate_counts_dir = Path(sample_files[0]).parent
@@ -635,24 +636,24 @@ rule aggregate_counts:
                         and intermediate_counts_dir.name == "counts"
                     ):
                         print(
-                            f"Removing intermediate counts directory: {intermediate_counts_dir}"
+                            f"[{datetime.now()}] {wildcards.experiment}: Removing intermediate counts directory: {intermediate_counts_dir}"
                         )
                         shutil.rmtree(intermediate_counts_dir)
                     else:
                         print(
-                            f"Warning: Could not reliably determine intermediate counts directory for removal ({intermediate_counts_dir}). Skipping removal."
+                            f"[{datetime.now()}] {wildcards.experiment}: Warning: Could not reliably determine intermediate counts directory for removal ({intermediate_counts_dir}). Skipping removal."
                         )
 
                 except Exception as e:
                     print(
-                        f"Error during count aggregation or cleanup for {wildcards.experiment}: {e}"
+                        f"[{datetime.now()}] ERROR during count aggregation or cleanup for {wildcards.experiment}: {e}"
                     )
                     with open(str(log), "w") as f:
                         f.write(f"Error: {e}")
                     raise e
         else:
             print(
-                f"Skipping count aggregation for {wildcards.experiment} (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
+                f"[{datetime.now()}] {wildcards.experiment}: Skipping count aggregation (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
             )
 
 
@@ -832,7 +833,7 @@ rule convert_rra_results:
         if config.get("skip_rra", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping RRA result conversion for {wildcards.contrast} due to skip_rra flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.csv_summary)
@@ -844,7 +845,7 @@ rule convert_rra_results:
         ):
             # Log error and raise (input is required for conversion)
             error_msg = f"Input RRA summary {input.rra_summary} not found or empty. Cannot convert."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -852,7 +853,7 @@ rule convert_rra_results:
             raise FileNotFoundError(error_msg)
 
         print(
-            f"Converting MAGeCK RRA results for {wildcards.experiment} - Contrast: {wildcards.contrast}"
+            f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Converting MAGeCK RRA results..."
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
@@ -861,20 +862,20 @@ rule convert_rra_results:
                 output_csv_path=str(output.csv_summary),
                 analysis_type="rra",
             )
-            print(f"RRA results converted to CSV: {output.csv_summary}")
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: RRA results converted to CSV: {output.csv_summary}")
         except NameError:
             # Log error and raise
             error_msg = (
                 "ERROR: convert_results_to_csv function not found/imported."
             )
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
         except Exception as e:
             # Log error and raise
             error_msg = f"Error converting RRA results for {wildcards.contrast}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -896,7 +897,7 @@ rule convert_mle_results:
         if config.get("skip_mle", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping MLE result conversion for {wildcards.experiment} due to skip_mle flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.csv_summary)
@@ -906,7 +907,7 @@ rule convert_mle_results:
         if not design_matrix_path.exists() or design_matrix_path.stat().st_size == 0:
             # Log skip and exit cleanly (matches skip condition in run_mle rule)
             info_msg = f"Skipping MLE result conversion for {wildcards.experiment}: Design matrix was missing or empty."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.csv_summary)
@@ -918,7 +919,7 @@ rule convert_mle_results:
         ):
             # Log error and raise (input is required for conversion)
             error_msg = f"Input MLE summary {input.mle_summary} not found or empty. Cannot convert."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -926,7 +927,7 @@ rule convert_mle_results:
             raise FileNotFoundError(error_msg)
 
         print(
-            f"Converting MAGeCK MLE results for {wildcards.experiment}"
+            f"[{datetime.now()}] {wildcards.experiment}: Converting MAGeCK MLE results..."
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
@@ -936,20 +937,20 @@ rule convert_mle_results:
                 output_csv_path=str(output.csv_summary),
                 analysis_type="mle",
             )
-            print(f"MLE results converted to CSV: {output.csv_summary}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: MLE results converted to CSV: {output.csv_summary}")
         except NameError:
             # Log error and raise
             error_msg = (
                 "ERROR: convert_results_to_csv function not found/imported."
             )
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
         except Exception as e:
             # Log error and raise
             error_msg = f"Error converting MLE results for {wildcards.experiment}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -973,7 +974,7 @@ rule convert_drugz_results:
         if config.get("skip_drugz", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping DrugZ result conversion for {wildcards.contrast} due to skip_drugz flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.csv_summary)
@@ -985,7 +986,7 @@ rule convert_drugz_results:
         ):
             # Log error and raise (input required)
             error_msg = f"Input DrugZ summary {input.drugz_summary} not found or empty. Cannot convert."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -993,7 +994,7 @@ rule convert_drugz_results:
             raise FileNotFoundError(error_msg)
 
         print(
-            f"Converting DrugZ results for {wildcards.experiment} - Contrast: {wildcards.contrast}"
+            f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Converting DrugZ results..."
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
@@ -1002,20 +1003,20 @@ rule convert_drugz_results:
                 output_csv_path=str(output.csv_summary),
                 analysis_type="drugz",
             )
-            print(f"DrugZ results converted to CSV: {output.csv_summary}")
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: DrugZ results converted to CSV: {output.csv_summary}")
         except NameError:
             # Log error and raise
             error_msg = (
                 "ERROR: convert_results_to_csv function not found/imported."
             )
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
         except Exception as e:
             # Log error and raise
             error_msg = f"Error converting DrugZ results for {wildcards.contrast}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.csv_summary)
@@ -1040,7 +1041,7 @@ rule plot_sgrna_distribution:
         if config.get("skip_qc", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping sgRNA distribution plot for {wildcards.experiment} due to skip_qc flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.html_plot)
@@ -1052,14 +1053,14 @@ rule plot_sgrna_distribution:
         ):
             # Log error and raise
             error_msg = f"Input count file {input.count_file} is missing or empty. Skipping sgRNA distribution plot."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
             # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
-        print(f"Plotting sgRNA distribution for {wildcards.experiment}")
+        print(f"[{datetime.now()}] {wildcards.experiment}: Plotting sgRNA distribution...")
         try:
             Path(output.html_plot).parent.mkdir(parents=True, exist_ok=True)
             success, msg = plot_sgRNA_distribution(
@@ -1069,17 +1070,17 @@ rule plot_sgrna_distribution:
             if not success:
                 # Log error and raise
                 error_msg = f"Plotting sgRNA distribution failed: {msg}"
-                print(f"ERROR: {error_msg}")
+                print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
                 with open(str(log), "w") as f:
                     f.write(error_msg)
                 raise RuntimeError(error_msg)
 
-            print(f"sgRNA distribution plot created: {output.html_plot}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: sgRNA distribution plot created: {output.html_plot}")
 
         except NameError:
             # Log error and raise
             error_msg = "ERROR: plot_sgRNA_distribution function not found/imported."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
@@ -1088,7 +1089,7 @@ rule plot_sgrna_distribution:
             error_msg = (
                 f"Error plotting sgRNA distribution for {wildcards.experiment}: {e}"
             )
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
@@ -1110,7 +1111,7 @@ rule plot_gene_distribution:
         if config.get("skip_qc", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping gene distribution plot for {wildcards.experiment} due to skip_qc flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.html_plot)
@@ -1122,14 +1123,14 @@ rule plot_gene_distribution:
         ):
             # Log error and raise
             error_msg = f"Input count file {input.count_file} is missing or empty. Skipping gene distribution plot."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
             # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
-        print(f"Plotting gene distribution for {wildcards.experiment}")
+        print(f"[{datetime.now()}] {wildcards.experiment}: Plotting gene distribution...")
         try:
             Path(output.html_plot).parent.mkdir(parents=True, exist_ok=True)
             success, msg = plot_gene_distribution(
@@ -1139,17 +1140,17 @@ rule plot_gene_distribution:
             if not success:
                 # Log error and raise
                 error_msg = f"Plotting gene distribution failed: {msg}"
-                print(f"ERROR: {error_msg}")
+                print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
                 with open(str(log), "w") as f:
                     f.write(error_msg)
                 raise RuntimeError(error_msg)
 
-            print(f"Gene distribution plot created: {output.html_plot}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: Gene distribution plot created: {output.html_plot}")
 
         except NameError:
             # Log error and raise
             error_msg = "ERROR: plot_gene_distribution function not found/imported."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
@@ -1158,7 +1159,7 @@ rule plot_gene_distribution:
             error_msg = (
                 f"Error plotting gene distribution for {wildcards.experiment}: {e}"
             )
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
@@ -1177,7 +1178,7 @@ rule plot_gini_index:
         if config.get("skip_qc", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping Gini index plot for {wildcards.experiment} due to skip_qc flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.html_plot)
@@ -1189,14 +1190,14 @@ rule plot_gini_index:
         ):
             # Log error and raise
             error_msg = f"Input count file {input.count_file} is missing or empty. Skipping Gini index plot."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
             # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
-        print(f"Plotting Gini index for {wildcards.experiment}")
+        print(f"[{datetime.now()}] {wildcards.experiment}: Plotting Gini index...")
         try:
             Path(output.html_plot).parent.mkdir(parents=True, exist_ok=True)
             success, msg = plot_gini_index(
@@ -1206,24 +1207,24 @@ rule plot_gini_index:
             if not success:
                 # Log error and raise
                 error_msg = f"Plotting Gini index failed: {msg}"
-                print(f"ERROR: {error_msg}")
+                print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
                 with open(str(log), "w") as f:
                     f.write(error_msg)
                 raise RuntimeError(error_msg)
 
-            print(f"Gini index plot created: {output.html_plot}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: Gini index plot created: {output.html_plot}")
 
         except NameError:
             # Log error and raise
             error_msg = "ERROR: plot_gini_index function not found/imported."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             raise
         except Exception as e:
             # Log error and raise
             error_msg = f"Error plotting Gini index for {wildcards.experiment}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
@@ -1249,7 +1250,7 @@ rule plot_roc_curve:
         if config.get("skip_qc", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping ROC curve plot for {wildcards.experiment}/{wildcards.contrast} due to skip_qc flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.html_plot)
@@ -1261,7 +1262,7 @@ rule plot_roc_curve:
         ):
             # Log error and raise (required input)
             error_msg = f"Input MAGeCK results {input.mageck_results} not found or empty. Cannot plot ROC."
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
@@ -1271,14 +1272,14 @@ rule plot_roc_curve:
         if not Path(input.known_controls).exists():
             # Log skip and exit cleanly (optional input)
             warn_msg = f"Known controls file {input.known_controls} not found. Skipping ROC plot for {wildcards.experiment}/{wildcards.contrast}."
-            print(f"WARNING: {warn_msg}")
+            print(f"[{datetime.now()}] WARNING {wildcards.experiment}/{wildcards.contrast}: {warn_msg}")
             with open(str(log), "w") as f:
                 f.write(warn_msg)
             # touch(output.html_plot)
             sys.exit(0)
 
         print(
-            f"Plotting ROC curve for {wildcards.experiment} - Contrast: {wildcards.contrast} (PLACEHOLDER)"
+            f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Plotting ROC curve (PLACEHOLDER)..."
         )
         try:
             Path(output.html_plot).parent.mkdir(parents=True, exist_ok=True)
@@ -1287,18 +1288,18 @@ rule plot_roc_curve:
             )
             # Placeholder: Just log completion, no touch needed
             # touch(output.html_plot)
-            print(f"ROC curve plot logged completion (placeholder): {output.html_plot}")
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: ROC curve plot logged completion (placeholder): {output.html_plot}")
 
         except NameError:
             error_msg = "ERROR: plot_roc_curve function not found/imported (placeholder assumes it exists)."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # No touch needed for placeholder
             # touch(output.html_plot)
         except Exception as e:
             error_msg = f"Error plotting ROC curve for {wildcards.experiment}/{wildcards.contrast}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.html_plot)
@@ -1340,13 +1341,13 @@ rule generate_qc_report:
         if config.get("skip_qc", False):
             # Log skip and exit cleanly
             info_msg = f"Skipping QC report generation for {wildcards.experiment} due to skip_qc flag."
-            print(info_msg)
+            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
                 f.write(info_msg)
             # touch(output.report)
             sys.exit(0)
 
-        print(f"Generating QC report for {wildcards.experiment} (PLACEHOLDER)")
+        print(f"[{datetime.now()}] {wildcards.experiment}: Generating QC report (PLACEHOLDER)...")
         try:
             Path(output.report).parent.mkdir(parents=True, exist_ok=True)
             input_files_dict = {
@@ -1361,26 +1362,26 @@ rule generate_qc_report:
                         "fastqc_reports": [
                             str(f) for f in input.fastqc_reports if Path(f).exists()
                         ],
-            }
+                    }
 
-            print(
+                    print(
                 "--> Placeholder rule: generate_qc_report() function would be called here with:"
             )
             print(input_files_dict)
             # Placeholder: Log completion, no touch needed
             # touch(output.report)
-            print(f"QC report logged completion (placeholder): {output.report}")
+            print(f"[{datetime.now()}] {wildcards.experiment}: QC report logged completion (placeholder): {output.report}")
 
         except NameError:
             error_msg = "ERROR: generate_qc_report function not found/imported (placeholder assumes it exists)."
-            print(error_msg)
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # No touch needed
             # touch(output.report)
         except Exception as e:
             error_msg = f"Error generating QC report for {wildcards.experiment}: {e}"
-            print(f"ERROR: {error_msg}")
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
             # touch(output.report)
@@ -1507,7 +1508,7 @@ rule all:
         # Single flag file indicating completion of requested targets
         OUTPUT_DIR / "pipeline_complete.flag",
     run:
-        print(f"CRISPR Analysis Pipeline Workflow Completed for targets:")
+        print(f"[{datetime.now()}] CRISPR Analysis Pipeline Workflow Completed for targets:")
         for f in input:
             print(f"- {f}")
-        print(f"Completion flag: {output}")
+        print(f"[{datetime.now()}] Completion flag: {output}")

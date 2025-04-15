@@ -13,6 +13,7 @@ import logging
 import subprocess
 from pathlib import Path
 import shlex # Import shlex for safer command splitting
+import datetime # Import datetime for timestamps
 
 def setup_logging():
     """Configure basic logging for the script."""
@@ -155,31 +156,38 @@ def run_snakemake(args):
         cmd_parts.append("--dryrun")
         
     # Join the command parts into a string
-    cmd = " ".join(shlex.quote(part) for part in cmd_parts) # Use shlex.quote for safety 
+    # cmd = " ".join(shlex.quote(part) for part in cmd_parts) # Use shlex.quote for safety 
+    # Use cmd_parts directly with Popen
     
     # Run Snakemake
-    logging.info(f"Running command: {cmd}")
+    logging.info(f"Running command: {' '.join(shlex.quote(part) for part in cmd_parts)}") # Log the quoted command
     try:
-        # Using shell=True for simplicity here, but consider direct execution with list if needed
-        # Capture output for logging
-        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
+        # Using shell=False and passing cmd_parts list is safer
+        # Redirect stderr to stdout to capture everything in one stream
+        process = subprocess.Popen(cmd_parts, 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.STDOUT, 
+                                   text=True, 
+                                   bufsize=1) # Line buffered
+
+        # Read and log output line by line in real-time
+        with process.stdout:
+            for line in iter(process.stdout.readline, ''):
+                logging.info(line.strip()) # Log each line as it arrives
+
+        # Wait for the process to complete and get the return code
+        return_code = process.wait()
         
-        if process.returncode == 0:
+        if return_code == 0:
             logging.info("Snakemake finished successfully.")
-            if stdout:
-                 logging.info("Snakemake stdout:\n" + stdout)
-            if stderr:
-                 logging.warning("Snakemake stderr:\n" + stderr) # Log stderr as warning even on success
             return 0
         else:
-            logging.error(f"Snakemake failed with error code {process.returncode}")
-            if stdout:
-                 logging.error("Snakemake stdout:\n" + stdout)
-            if stderr:
-                 logging.error("Snakemake stderr:\n" + stderr)
-            return process.returncode
+            logging.error(f"Snakemake failed with error code {return_code}")
+            return return_code
 
+    except FileNotFoundError: # Handle case where snakemake command is not found
+        logging.error(f"Error: 'snakemake' command not found. Is Snakemake installed and in your PATH?")
+        return 1
     except Exception as e:
         logging.error(f"Error running Snakemake: {str(e)}")
         return 1
@@ -189,18 +197,27 @@ def main():
     setup_logging()
     args = parse_args()
     
+    logging.info(f"--- Starting run_snakemake.py at {datetime.datetime.now()} ---")
+    
     # Check if base directory exists
+    logging.info(f"Checking base directory: {args.base_dir}")
     if not os.path.isdir(args.base_dir):
         logging.error(f"Base directory {args.base_dir} does not exist or is not a directory")
         return 1
         
     # Check profile directory if specified
-    if args.profile and not os.path.isdir(args.profile):
-         logging.error(f"Profile directory {args.profile} does not exist or is not a directory")
-         return 1
+    if args.profile:
+        logging.info(f"Checking profile directory: {args.profile}")
+        if not os.path.isdir(args.profile):
+            logging.error(f"Profile directory {args.profile} does not exist or is not a directory")
+            return 1
 
     # Run Snakemake
-    return run_snakemake(args)
+    logging.info("Proceeding to execute Snakemake workflow...")
+    exit_code = run_snakemake(args)
+    
+    logging.info(f"--- run_snakemake.py finished at {datetime.datetime.now()} with exit code {exit_code} ---")
+    return exit_code
 
 if __name__ == "__main__":
     sys.exit(main()) 
