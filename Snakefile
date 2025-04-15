@@ -97,23 +97,24 @@ rule build_sif_files:
         drugz=DRUGZ_SIF,
     log:
         # Log file placed within the SIF directory
-        SIF_DIR / "sif_build.log",
+        str(SIF_DIR / "sif_build.log"),
     params:
         fastqc_uri=config["fastqc_docker_uri"],
         mageck_uri=config["mageck_docker_uri"],
         drugz_uri=config["drugz_docker_uri"],
         sif_dir=SIF_DIR,
-    shell:
+    shell: r"""
         # Create the SIF directory
-        "mkdir -p {params.sif_dir}; "
+        mkdir -p {params.sif_dir}
         # Build each SIF file
         # Use --force to overwrite existing SIF files if the rule is triggered
-        "echo 'Building FastQC SIF...' >> {log}; "
-        "apptainer build --force {output.fastqc} {params.fastqc_uri} >> {log} 2>&1 && \
-        "echo 'Building MAGeCK SIF...' >> {log}; "
-        "apptainer build --force {output.mageck} {params.mageck_uri} >> {log} 2>&1 && \
-        "echo 'Building DrugZ SIF...' >> {log}; "
-        "apptainer build --force {output.drugz} {params.drugz_uri} >> {log} 2>&1"
+        echo 'Building FastQC SIF...' >> {log}
+        apptainer build --force {output.fastqc} {params.fastqc_uri} >> {log} 2>&1 && \
+        echo 'Building MAGeCK SIF...' >> {log}
+        apptainer build --force {output.mageck} {params.mageck_uri} >> {log} 2>&1 && \
+        echo 'Building DrugZ SIF...' >> {log}
+        apptainer build --force {output.drugz} {params.drugz_uri} >> {log} 2>&1
+    """
 
 # --- Experiment Discovery & Filtering ---
 
@@ -482,18 +483,109 @@ rule run_fastqc_per_sample:
         input.sif # Use the SIF file from input
     shell:
         # Create output directory first
-        "mkdir -p {params.output_dir}; "
+        r"""
+        mkdir -p {params.output_dir};
         # Run fastqc
-        "fastqc "
-            "--threads {threads} "
-            "-o {params.output_dir} "
-            "{input.fastq} "
-            "> {log} 2>&1" # Redirect stdout and stderr to log file
+        fastqc \
+            --threads {threads} \
+            -o {params.output_dir} \
+            {input.fastq} \
+            > {log} 2>&1
+        """
+
+
+# --- Rule to run MAGeCK count per sample (from FASTQ) ---
+rule run_mageck_count_per_sample:
+    input:
+        r1=get_fastq_for_sample,
+        r2=get_fastq_r2_for_sample, # May return None if single-end
+        library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
+        sif=MAGECK_SIF,
+    output:
+        # Define both expected outputs, mark summary as temporary if desired
+        count=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
+        summary=temp(OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.countsummary.txt"),
+    params:
+        output_prefix=lambda wc, output: str(Path(output.count).parent / wc.sample), # e.g., output/exp1/counts/sampleA
+        sample_name="{sample}",
+        library_path=lambda wc: get_validation_info(wc.experiment).get("library_path"),
+        count_options=config.get("mageck_count_options", {}), # Get options from config if needed
+        # use_apptainer=config["use_apptainer"], # REMOVED
+    log:
+        OUTPUT_DIR / "{experiment}" / "logs" / "mageck_count_{sample}.log",
+    threads: 1 # MAGeCK count is typically single-threaded
+    resources:
+        mem_mb=8000, # Adjust as needed
+        time_min=120 # Adjust as needed
+    container:
+        input.sif
+    run:
+        validation_info = get_validation_info(wildcards.experiment)
+        if validation_info["status"] != "valid" or validation_info.get("data_type") != "fastq":
+            info_msg = f"Skipping MAGeCK count for {wildcards.experiment}/{wildcards.sample}: Not a valid FASTQ experiment."
+            print(info_msg)
+            with open(str(log), "w") as f: f.write(info_msg)
+            # Create dummy outputs to satisfy Snakemake if skipped
+            # touch(output.count)
+            # touch(output.summary)
+            sys.exit(0) # Exit cleanly
+
+        if not params.library_path or not Path(params.library_path).exists():
+            error_msg = f"ERROR: Library file not found for {wildcards.experiment}: {params.library_path}"
+            print(error_msg)
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        print(f"Running MAGeCK count for {wildcards.experiment}/{wildcards.sample}")
+        try:
+            # Ensure the output directory exists before calling the function
+            Path(params.output_prefix).parent.mkdir(parents=True, exist_ok=True)
+
+            success, msg_or_path = run_mageck_count(
+                r1_fastq=str(input.r1),
+                r2_fastq=str(input.r2) if input.r2 else None, # Pass R2 only if it exists
+                library_path=params.library_path,
+                output_prefix=params.output_prefix,
+                sample_name=params.sample_name,
+                count_options=params.count_options,
+                use_apptainer=True, # Assuming container use defined by profile/flag
+                container_image=str(input.sif) # Pass SIF path as image
+            )
+
+            if not success:
+                error_msg = f"MAGeCK count failed for {wildcards.sample}: {msg_or_path}"
+                print(f"ERROR: {error_msg}")
+                with open(str(log), "w") as f: f.write(error_msg)
+                # Potentially touch outputs even on failure if needed by workflow logic,
+                # but raising error is usually better.
+                raise RuntimeError(error_msg)
+            else:
+                print(f"MAGeCK count successful for {wildcards.sample}. Output: {msg_or_path}")
+                # Verify the expected output files were actually created by the function
+                if not Path(output.count).exists() or not Path(output.summary).exists():
+                     warn_msg = f"Warning: run_mageck_count reported success but expected output files missing ({output.count}, {output.summary})"
+                     print(warn_msg)
+                     with open(str(log), "a") as f: f.write(f"\n{warn_msg}")
+                     # Decide if this should be a fatal error
+                     # raise FileNotFoundError(warn_msg)
+
+
+        except NameError:
+            error_msg = "ERROR: run_mageck_count function not found/imported."
+            print(error_msg)
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise
+        except Exception as e:
+            error_msg = f"Error running MAGeCK count for {wildcards.sample}: {e}"
+            print(f"ERROR: {error_msg}")
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise e
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
 rule aggregate_counts:
     input:
+        # Input now depends on the output of the new count rule
         sample_counts=lambda wc: expand(
             OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
             experiment=wc.experiment,
@@ -564,14 +656,6 @@ rule aggregate_counts:
             )
 
 
-# --- Function to determine MAGeCK library flag ---
-def get_mageck_library_flag(library_path):
-    """Returns '--library' or '--list-seq' based on file extension."""
-    if str(library_path).lower().endswith(".csv"):
-        return "--list-seq"
-    else:
-        return "--library"
-
 # --- Helper Functions for Contrast/Option Formatting ---
 def get_contrast_samples(wildcards, sample_type):
     """Gets comma-separated list of treatment or control samples for a contrast."""
@@ -640,15 +724,17 @@ rule run_mageck_rra_per_contrast:
         input.sif # Use the SIF file from input
     shell:
         # Ensure output directory exists first
-        "mkdir -p $(dirname {output.gene_summary}); "
+        r"""
+        mkdir -p $(dirname {output.gene_summary});
         # Run mageck test
-        "mageck test "
-            "-k {input.count_file} "
-            "-t {params.treatment_samples} "
-            "-c {params.control_samples} "
-            "-n {params.output_prefix} "
-            "{params.analysis_options_str} "
-            "> {log} 2>&1"
+        mageck test \
+            -k {input.count_file} \
+            -t {params.treatment_samples} \
+            -c {params.control_samples} \
+            -n {params.output_prefix} \
+            {params.analysis_options_str} \
+            > {log} 2>&1
+        """
 
 
 # --- Rule to run MAGeCK MLE per experiment (Conditional) ---
@@ -676,14 +762,16 @@ rule run_mageck_mle_per_experiment:
         input.sif # Use the SIF file from input
     shell:
         # Ensure output directory exists first
-        "mkdir -p $(dirname {output.gene_summary}); "
+        r"""
+        mkdir -p $(dirname {output.gene_summary});
         # Run mageck mle
-        "mageck mle "
-            "-k {input.count_file} "
-            "-d {input.design_matrix} "
-            "-n {params.output_prefix} "
-            "{params.analysis_options_str} "
-            "> {log} 2>&1"
+        mageck mle \
+            -k {input.count_file} \
+            -d {input.design_matrix} \
+            -n {params.output_prefix} \
+            {params.analysis_options_str} \
+            > {log} 2>&1
+        """
 
 
 # --- Rule to run DrugZ per contrast (Conditional) ---
@@ -714,15 +802,17 @@ rule run_drugz_per_contrast:
         input.sif # Use the SIF file from input
     shell:
         # Ensure output directory exists first
-        "mkdir -p $(dirname {output.drugz_results}); "
+        r"""
+        mkdir -p $(dirname {output.drugz_results});
         # Assume drugz.py is at /drugz/drugz.py in the container
-        "python /drugz/drugz.py "
-            "--input {input.count_file} "
-            "--output {params.output_path} # Pass the full output path
-            "--control-id {params.control_samples} "
-            "--treatment-id {params.treatment_samples} "
-            "{params.analysis_options_str} "
-            "> {log} 2>&1"
+        python /drugz/drugz.py \
+            --input {input.count_file} \
+            --output "{params.output_path}" \
+            --control-id {params.control_samples} \
+            --treatment-id {params.treatment_samples} \
+            {params.analysis_options_str} \
+            > {log} 2>&1
+        """
 
 
 # --- Rule to Convert MAGeCK RRA Results to CSV ---

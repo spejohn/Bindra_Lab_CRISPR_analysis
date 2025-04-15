@@ -1,8 +1,6 @@
 # profiles/slurm/config.yaml
 jobs: 100
-default-resources:
-  - mem_mb=32000 # Default 32GB RAM
-  - time_min=120 # Default 2 hour runtime
+default-resources: "mem_mb=32000 time_min=120" # Try space-separated format
 cluster: >-
   sbatch
   --cpus-per-task={threads}

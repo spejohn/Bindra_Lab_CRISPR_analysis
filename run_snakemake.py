@@ -74,6 +74,11 @@ def parse_args():
     parser.add_argument("--profile", help="Path to Snakemake profile directory for cluster execution") # New argument
     parser.add_argument("--dryrun", action="store_true", help="Show what would be done without executing")
     
+    # Containerization flags (Mutually exclusive)
+    container_group = parser.add_mutually_exclusive_group()
+    container_group.add_argument("--use-apptainer", action="store_true", help="Use Apptainer for container execution")
+    container_group.add_argument("--use-docker", action="store_true", help="Use Docker for container execution (default if available and neither flag set)")
+    
     # Analysis options (passed via --config)
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
@@ -116,7 +121,6 @@ def run_snakemake(args):
         f"skip_drugz={str(args.skip_drugz).lower()}",
         f"skip_qc={str(args.skip_qc).lower()}",
         f"skip_mle={str(args.skip_mle).lower()}",
-        f"use_apptainer=true" # Align with Snakefile default
     ]
     
     # Add target experiments if specified - use target_screens key for Snakefile
@@ -137,6 +141,15 @@ def run_snakemake(args):
         # Consider removing -j or setting it low if profile manages jobs. The profile's 'jobs:' key often controls this.
         logging.info(f"Using profile: {args.profile}. Ensure profile config handles job limits and resource allocation.")
         
+    # Add containerization flag if specified
+    if args.use_apptainer:
+        cmd_parts.append("--use-apptainer")
+        # Optionally add Apptainer specific args if needed
+        # cmd_parts.extend(["--apptainer-args", "'--bind /path/on/host:/path/in/container'"]) 
+    elif args.use_docker:
+        cmd_parts.append("--use-docker")
+    # else: Default behavior is no container flag, snakemake runs locally
+
     # Add dryrun if specified
     if args.dryrun:
         cmd_parts.append("--dryrun")
