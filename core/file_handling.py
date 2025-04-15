@@ -540,7 +540,11 @@ def identify_analyzed_experiments(output_dir: str) -> Dict[str, Dict[str, bool]]
     return analyzed_experiments
 
 
-def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
+def convert_results_to_csv(
+    result_file: str, 
+    analysis_type: str,
+    output_csv_path: Optional[str] = None
+) -> str:
     """
     Convert analysis results (RRA, MLE, or DrugZ) to CSV format.
     Selects relevant columns and ensures basic format consistency.
@@ -548,6 +552,7 @@ def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
     Args:
         result_file: Path to the result file (tab-delimited text output from tool).
         analysis_type: Type of analysis ('RRA', 'MLE', or 'DrugZ').
+        output_csv_path: Optional path to save the CSV file. If None, saves next to result_file.
         
     Returns:
         Path to the created CSV file.
@@ -581,15 +586,20 @@ def convert_results_to_csv(result_file: str, analysis_type: str) -> str:
     else:
         raise ValueError(f"Unrecognized analysis_type for CSV conversion: {analysis_type}")
     
-    # Create new filename with appropriate suffix
-    result_dir = result_path.parent
-    # Clean up potential existing suffixes in the base name
-    base_name = result_path.stem
-    for old_suffix in ['.gene_summary', '.drugz', '_RRA', '_MLE', '_DrugZ']:
-        if old_suffix in base_name:
-            base_name = base_name.replace(old_suffix, '')
-    
-    csv_file_path = result_dir / f"{base_name}{suffix}.csv"
+    # Determine output path
+    if output_csv_path:
+        csv_file_path = Path(output_csv_path)
+        # Ensure parent directory exists if specified explicitly
+        csv_file_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        # Original behavior: save next to input file
+        result_dir = result_path.parent
+        # Clean up potential existing suffixes in the base name
+        base_name = result_path.stem
+        for old_suffix in ['.gene_summary', '.drugz', '_RRA', '_MLE', '_DrugZ']:
+            if old_suffix in base_name:
+                base_name = base_name.replace(old_suffix, '')
+        csv_file_path = result_dir / f"{base_name}{suffix}.csv"
     
     try:
         # Read the tab-delimited file, skipping potential comment lines

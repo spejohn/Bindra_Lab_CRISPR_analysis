@@ -21,7 +21,7 @@ import shlex  # Added for shlex.quote
 try:
     # Use absolute import path assuming Snakefile is at root
     from core.validation import validate_experiment_structure
-    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts
+    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts, make_count_table, convert_results_to_csv
     from core.analysis_steps import (
         run_fastqc,
         run_mageck_count,
@@ -856,7 +856,7 @@ rule convert_rra_results:
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
-            convert_mageck_summary_to_csv(
+            convert_results_to_csv(
                 input_txt_path=str(input.rra_summary),
                 output_csv_path=str(output.csv_summary),
                 analysis_type="rra",
@@ -865,7 +865,7 @@ rule convert_rra_results:
         except NameError:
             # Log error and raise
             error_msg = (
-                "ERROR: convert_mageck_summary_to_csv function not found/imported."
+                "ERROR: convert_results_to_csv function not found/imported."
             )
             print(error_msg)
             with open(str(log), "w") as f:
@@ -931,7 +931,7 @@ rule convert_mle_results:
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
             # Ensure this function exists and handles the input/output format
-            convert_mageck_summary_to_csv(
+            convert_results_to_csv(
                 input_txt_path=str(input.mle_summary),
                 output_csv_path=str(output.csv_summary),
                 analysis_type="mle",
@@ -940,7 +940,7 @@ rule convert_mle_results:
         except NameError:
             # Log error and raise
             error_msg = (
-                "ERROR: convert_mageck_summary_to_csv function not found/imported."
+                "ERROR: convert_results_to_csv function not found/imported."
             )
             print(error_msg)
             with open(str(log), "w") as f:
@@ -997,15 +997,16 @@ rule convert_drugz_results:
         )
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
-            convert_drugz_summary_to_csv(
+            convert_results_to_csv(
                 input_txt_path=str(input.drugz_summary),
                 output_csv_path=str(output.csv_summary),
+                analysis_type="drugz",
             )
             print(f"DrugZ results converted to CSV: {output.csv_summary}")
         except NameError:
             # Log error and raise
             error_msg = (
-                "ERROR: convert_drugz_summary_to_csv function not found/imported."
+                "ERROR: convert_results_to_csv function not found/imported."
             )
             print(error_msg)
             with open(str(log), "w") as f:
@@ -1360,9 +1361,9 @@ rule generate_qc_report:
                         "fastqc_reports": [
                             str(f) for f in input.fastqc_reports if Path(f).exists()
                         ],
-                    }
+            }
 
-                    print(
+            print(
                 "--> Placeholder rule: generate_qc_report() function would be called here with:"
             )
             print(input_files_dict)
