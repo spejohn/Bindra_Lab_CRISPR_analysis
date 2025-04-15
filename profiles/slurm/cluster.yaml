@@ -1,0 +1,15 @@
+"__default__":
+  # Default parameters for all rules
+  partition: "day" # Default partition
+  mem: "{resources.mem_mb}M" # Memory in MB
+  time: "{resources.time_min}" # Time in minutes
+  cpus-per-task: "{threads}" # Use rule threads
+  job-name: "sm.{rule}.{wildcards}" # Job name pattern
+  output: "logs/{rule}.{wildcards}.out" # Standard output file relative to workdir
+  error: "logs/{rule}.{wildcards}.err" # Standard error file relative to workdir
+
+# Add rule-specific overrides below if needed, e.g.:
+# run_fastqc_per_sample:
+#   mem: "8000M"
+#   time: "120"
+#   partition: "bigmem" 

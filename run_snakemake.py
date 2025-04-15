@@ -137,8 +137,11 @@ def run_snakemake(args):
     if args.profile:
         cmd_parts.extend(["--profile", args.profile])
         logging.info(f"Using profile: {args.profile}")
-        # The profile config.yaml should contain the cluster config
-        
+        # The profile now implicitly activates the executor if --executor isn't also given
+        # Explicitly adding --executor is clearer
+        cmd_parts.extend(["--executor", "slurm"])
+        logging.info(f"Using executor: slurm (via profile or explicit flag)")
+
     # Add containerization flag if specified
     if args.use_apptainer:
         cmd_parts.append("--use-apptainer")
@@ -205,6 +208,7 @@ def main():
     # Check profile directory if specified
     if args.profile:
         logging.info(f"Checking profile directory: {args.profile}")
+        logging.info(f"Profile directory exists: {os.path.isdir(args.profile)}")
         if not os.path.isdir(args.profile):
             logging.error(f"Profile directory {args.profile} does not exist or is not a directory")
             return 1

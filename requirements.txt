@@ -13,6 +13,7 @@ profilehooks
 
 # Workflow management
 snakemake
+snakemake-executor-plugin-slurm
 appdirs>=1.4.4
 immutables>=0.21
 smart_open>=7.0.0
