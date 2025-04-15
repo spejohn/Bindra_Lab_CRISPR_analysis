@@ -5,8 +5,8 @@ default-resources:
   mem_mb: 32000
   time_min: 120
 
-# Cluster execution configuration
-cluster: "./slurm-submit.sh --cpus-per-task={threads} --mem={resources.mem_mb} --time={resources.time_min} --job-name=sm.{rule}.{wildcards} --output={workdir}/logs/{rule}.{wildcards}.out --error={workdir}/logs/{rule}.{wildcards}.err"
+# Direct SLURM job submission with sbatch
+cluster: "sbatch --parsable --cpus-per-task={threads} --mem={resources.mem_mb}M --time={resources.time_min} --job-name=sm.{rule}.{wildcards} --output={workdir}/logs/{rule}.{wildcards}.out --error={workdir}/logs/{rule}.{wildcards}.err --partition=day"
 
 # Optional: specify status check script if needed
 # cluster-status: "./slurm-status.py"
