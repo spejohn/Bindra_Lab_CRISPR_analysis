@@ -528,16 +528,15 @@ rule run_fastqc_per_sample:
     resources:
         mem_mb=24000,
         time_min=120
-    params: # Add params directive back, even if empty
-        # No specific parameters needed for the shell command anymore
+    # No params block needed
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "fastqc_{sample}.log",
     container:
         # Directly reference the SIF path variable, converted to string
         str(FASTQC_SIF)
     shell:
-        # Snakemake ensures the output directory exists on the host and mounts it.
-        # Run fastqc, outputting to the current directory (.) inside the container.
+        # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
+        #       and runs the shell command in the mounted output directory.
         r"""
         fastqc \
             --threads {threads} \
@@ -560,18 +559,13 @@ rule run_mageck_count_per_sample:
         # Make summary persistent for aggregation
         summary=OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.countsummary.txt",
     params:
-        # Define paths relative to container mounts
-        # These help define the mount points for Snakemake
+        # Define paths relative to container mounts (can be helpful for debugging/reference)
         r1_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r1)).name}",
         r2_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r2)).name}" if input.r2 else "",
         library_container_path=lambda wc, input: f"/data/library/{Path(str(input.library)).name}",
-        # Define the prefix path *inside* the container's output mount
-        # Snakemake maps the host output dir (mageck_count_outputs) to /data/output
-        output_prefix_container="/data/output/{sample}",
-        # Define host paths for binding
+        # Define host paths for binding (can be helpful for debugging/reference)
         fastq_dir_host=lambda wc, input: str(Path(str(input.r1)).parent),
         library_dir_host=lambda wc, input: str(Path(str(input.library)).parent),
-        # Host output directory is now the new subdirectory
         output_dir_host=lambda wc, output: str(Path(str(output.count_txt)).parent),
         # Mageck options from config
         count_options_str=lambda wc: format_options(config.get("mageck_count_options", {})),
@@ -585,19 +579,18 @@ rule run_mageck_count_per_sample:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
     shell:
-        # Ensure the target output directory exists *inside* the container
-        # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
+        # Note: Snakemake automatically translates paths and runs the shell command
+        #       in the mounted host output directory (params.output_dir_host).
+        #       The --output-prefix uses a relative path within that directory.
         r"""
-        mkdir -p $(dirname {params.output_prefix_container});
-        mageck count \\
-            --fastq {input.r1} \\
-            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \\
-            --list-seq {input.library} \\
-            --sample-label {wildcards.sample} \\
-            --output-prefix {params.output_prefix_container} \\
-            {params.count_options_str} \\
+        mageck count \
+            --fastq {input.r1} \
+            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
+            --list-seq {input.library} \
+            --sample-label {wildcards.sample} \
+            --output-prefix ./{wildcards.sample} \
+            {params.count_options_str} \
             > {log} 2>&1
-        # No mv commands needed now, files are created in the mounted output directory
         """
 
 
@@ -678,8 +671,8 @@ rule aggregate_counts:
         sample_counts=lambda wc: expand(
             OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt", # Look in subdirectory
             experiment=wc.experiment,
-            sample=get_fastq_basenames(wc.experiment),
-        ),
+            sample=get_fastq_basenames(wc.experiment)
+        )
     output:
         # Aggregated output is still at the experiment level
         agg_count_txt=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
