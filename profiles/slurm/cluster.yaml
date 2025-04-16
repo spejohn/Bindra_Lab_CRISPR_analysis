@@ -2,7 +2,8 @@
   # Default parameters for all rules
   partition: "day" # Default partition
   mem: "{resources.mem_mb}M" # Memory in MB
-  time: "{resources.time_min}" # Time in minutes
+  time: "02:00:00" # Default wall time (e.g., 2 hours, HH:MM:SS)
+  account: "sj759" # <<< EDIT THIS to your SLURM account
   cpus-per-task: "{threads}" # Use rule threads
   job-name: "sm.{rule}.{wildcards}" # Job name pattern
   output: "logs/{rule}.{wildcards}.out" # Standard output file relative to workdir

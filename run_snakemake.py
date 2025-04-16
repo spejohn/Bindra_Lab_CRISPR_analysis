@@ -14,16 +14,32 @@ import subprocess
 from pathlib import Path
 import shlex # Import shlex for safer command splitting
 import datetime # Import datetime for timestamps
+from logging.handlers import FileHandler # Import FileHandler
 
 def setup_logging():
-    """Configure basic logging for the script."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler()
-        ]
-    )
+    """Configure basic logging for the script to console and file."""
+    log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Console Handler
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(log_formatter)
+    root_logger.addHandler(stream_handler)
+
+    # File Handler (timestamped, in logs/ directory)
+    log_dir = Path("logs")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True) # Ensure logs directory exists
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = log_dir / f"run_snakemake_main_{timestamp}.log"
+        file_handler = logging.FileHandler(log_filename)
+        file_handler.setFormatter(log_formatter)
+        root_logger.addHandler(file_handler)
+        # Log the name of the file log being created
+        root_logger.info(f"Logging run_snakemake.py output to file: {log_filename}")
+    except Exception as e:
+        root_logger.error(f"Failed to create file handler for logs/run_snakemake_main_...log: {e}")
 
 def get_available_cores():
     """
