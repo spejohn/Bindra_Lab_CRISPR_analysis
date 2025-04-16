@@ -1533,12 +1533,17 @@ rule generate_qc_report:
 def get_final_outputs(wildcards, checkpoints):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
+    print("--- Entering get_final_outputs ---") # DEBUG
+    print(f"Target experiments: {TARGET_EXPERIMENTS}") # DEBUG
 
     # Use wildcards.experiment if rule all defines experiment, otherwise iterate
     # Assuming rule all doesn't have {experiment} wildcard for simplicity now
     # We iterate over TARGET_EXPERIMENTS determined earlier
     for experiment in TARGET_EXPERIMENTS:
+        print(f"Processing experiment: {experiment}") # DEBUG
         validation_info = get_validation_info(experiment)
+        print(f"Validation info for {experiment}: {validation_info}") # DEBUG
+
         if validation_info["status"] == "failed":
             print(
                 f"Skipping final output collection for failed experiment: {experiment}"
@@ -1547,98 +1552,116 @@ def get_final_outputs(wildcards, checkpoints):
 
         # Use the modified get_contrast_names function with checkpoints object
         # Pass SimpleNamespace for wildcards as before if needed, or adjust based on how rule all calls this
+        print(f"Calling get_contrast_names for {experiment}...") # DEBUG
         contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints)
+        print(f"Contrasts for {experiment}: {contrasts}") # DEBUG
 
         if (
-            not isinstance(contrasts, list) or ("error" in contrasts[0] if contrasts else False) # Handle error case and empty list
+            not isinstance(contrasts, list) or (contrasts and "error" in contrasts[0]) # Handle error case and empty list
         ):
             print(
                 f"Skipping contrast-specific outputs for {experiment} due to contrast parsing issues."
             )
-            contrasts = []
+            contrasts = [] # Ensure contrasts is an empty list if issues occurred
 
         # --- 1. Analysis Results (per contrast / per experiment) ---
+        print(f"Checking analysis results for {experiment}...") # DEBUG
         for contrast in contrasts:
+            print(f"  Checking contrast: {contrast}") # DEBUG
             # Add RRA results if not skipped
             if not config.get("skip_rra", False):
-                final_files.append(
-                    # Expect converted CSV at experiment level
-                    OUTPUT_DIR / experiment / f"{contrast}_gMGK.csv"
-                )
+                rra_file = OUTPUT_DIR / experiment / f"{contrast}_gMGK.csv"
+                print(f"    Adding RRA target: {rra_file}") # DEBUG
+                final_files.append(rra_file)
+            else:
+                print("    Skipping RRA (skip_rra=True)") # DEBUG
 
             # Add DrugZ results if not skipped
             if not config.get("skip_drugz", False):
-                final_files.append(
-                    # Expect converted CSV at experiment level
-                    OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
-                )
+                dz_file = OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
+                print(f"    Adding DrugZ target: {dz_file}") # DEBUG
+                final_files.append(dz_file)
+            else:
+                 print("    Skipping DrugZ (skip_drugz=True)") # DEBUG
 
         # Add MLE results (per experiment) if not skipped AND design matrix exists
+        print(f"Checking MLE results for {experiment}...") # DEBUG
         # Check for *converted* design matrix in output dir
         design_matrix_path = OUTPUT_DIR / experiment / "design_matrix.txt"
         # Check if the *rule output* design matrix exists and is non-empty
-        design_output_exists = design_matrix_path.exists() and design_matrix_path.stat().st_size > 0
+        design_output_exists = design_matrix_path.exists() # and design_matrix_path.stat().st_size > 0 # Size check might be too strict initially
+        print(f"  MLE Check: skip_mle={config.get('skip_mle', False)}, design_matrix_exists={design_output_exists} ({design_matrix_path})") # DEBUG
 
         if not config.get("skip_mle", False) and design_output_exists:
-            # Add NATIVE MLE outputs (now experiment-level)
-            final_files.append(
-                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.gene_summary.txt"
-            )
-            final_files.append(
-                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.sgrna_summary.txt"
-            )
-            final_files.append(
-                OUTPUT_DIR / experiment / "MLE_analysis_results" / f"{experiment}_MLE.beta_coefficients.txt"
-            )
+             # Add NATIVE MLE outputs (now experiment-level)
+            mle_gene_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.gene_summary.txt"
+            mle_sgrna_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.sgrna_summary.txt"
+            mle_beta_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.beta_coefficients.txt"
             # Add CONVERTED MLE CSV (at experiment level)
-            final_files.append(
-                 OUTPUT_DIR / experiment / f"{experiment}_gMLE.csv"
-            )
+            mle_csv = OUTPUT_DIR / experiment / f"{experiment}_gMLE.csv"
+            print(f"    Adding MLE targets: {mle_gene_native}, {mle_sgrna_native}, {mle_beta_native}, {mle_csv}") # DEBUG
+            final_files.append(mle_gene_native)
+            final_files.append(mle_sgrna_native)
+            final_files.append(mle_beta_native)
+            final_files.append(mle_csv)
+        else:
+            print(f"    Skipping MLE targets.") # DEBUG
 
         # --- 2. QC Files (Conditional) ---
+        print(f"Checking QC files for {experiment}...") # DEBUG
         if not config.get("skip_qc", False):
             # Per-experiment QC plots (ensure rules still exist)
             if "plot_sgrna_distribution" in globals(): # Check if rule exists
-                final_files.append(
-                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
-                )
+                sgrna_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
+                print(f"    Adding QC target: {sgrna_plot}") # DEBUG
+                final_files.append(sgrna_plot)
             if "plot_gene_distribution" in globals():
-                final_files.append(
-                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
-                )
+                gene_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
+                print(f"    Adding QC target: {gene_plot}") # DEBUG
+                final_files.append(gene_plot)
             if "plot_gini_index" in globals():
-                final_files.append(
-                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_gini_index.html"
-                )
+                gini_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_gini_index.html"
+                print(f"    Adding QC target: {gini_plot}") # DEBUG
+                final_files.append(gini_plot)
             if "generate_qc_report" in globals():
-                final_files.append(
-                    OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
-                )  # Aggregate report
+                qc_report = OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
+                print(f"    Adding QC target: {qc_report}") # DEBUG
+                final_files.append(qc_report)
 
             # Per-contrast QC plots (ROC needs controls check)
             if "plot_roc_curve" in globals():
                 known_controls_path = BASE_DIR / experiment / "known_controls.csv"
+                print(f"  ROC Check: known_controls_exists={known_controls_path.exists()} ({known_controls_path})") # DEBUG
                 if known_controls_path.exists(): # Only add ROC if controls file exists
                     for contrast in contrasts:
-                        final_files.append(
-                            OUTPUT_DIR
-                            / experiment
-                            / "qc"
-                            / f"{experiment}_{contrast}_roc.html"
-                        )
+                        roc_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_{contrast}_roc.html"
+                        print(f"    Adding QC target: {roc_plot}") # DEBUG
+                        final_files.append(roc_plot)
+                else:
+                    print("    Skipping ROC plots (no known_controls.csv)") # DEBUG
+            else:
+                 print("    Skipping ROC plots (rule not defined)") # DEBUG
 
             # Per-sample FastQC reports (if FASTQ input)
+            print(f"  FastQC Check: data_type={validation_info.get('data_type')}") # DEBUG
             if validation_info.get("data_type") == "fastq" and "run_fastqc_per_sample" in globals():
-                for sample in get_fastq_basenames(experiment):
-                    final_files.append(
-                        OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.html"
-                    )
-                    final_files.append(
-                        OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.zip"
-                    )
+                fastq_basenames = get_fastq_basenames(experiment)
+                print(f"    FastQC basenames: {fastq_basenames}") # DEBUG
+                for sample in fastq_basenames:
+                    fq_html = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.html"
+                    fq_zip = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.zip"
+                    print(f"    Adding QC targets: {fq_html}, {fq_zip}") # DEBUG
+                    final_files.append(fq_html)
+                    final_files.append(fq_zip)
+            else:
+                print("    Skipping FastQC reports (not FASTQ data or rule undefined)") # DEBUG
+        else:
+            print("  Skipping ALL QC (skip_qc=True)") # DEBUG
 
     # Convert Path objects to strings for Snakemake input list
-    return [str(f) for f in final_files]
+    final_files_str = [str(f) for f in final_files]
+    print(f"--- Exiting get_final_outputs with {len(final_files_str)} targets: {final_files_str} ---") # DEBUG
+    return final_files_str
 
 
 # --- Final Target Rule ---
