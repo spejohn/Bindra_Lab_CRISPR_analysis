@@ -250,9 +250,12 @@ checkpoint convert_contrasts:
     output:
         # Define output dynamically based on input file stem
         txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
+    params:
+        # Calculate the dynamic part of the log name here
+        log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem
     log:
-        # Use lambda for dynamic log path construction
-        lambda wc: OUTPUT_DIR / wc.experiment / "logs" / f"convert_contrasts_{Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem}.log",
+        # Reference the param in a simple string format
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts_{params.log_stem}.log",
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
@@ -297,9 +300,12 @@ rule convert_design_matrix:
     output:
         # Define output dynamically based on input file stem (if input exists and is csv)
         txt=lambda wc: get_converted_metadata_path(wc, "design_matrix"),
+    params:
+        # Calculate the dynamic part of the log name here
+        log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('design_matrix_path', 'NO_INPUT')).stem
     log:
-        # Use lambda for dynamic log path construction
-        lambda wc: OUTPUT_DIR / wc.experiment / "logs" / f"convert_design_matrix_{Path(get_validation_info(wc.experiment).get('design_matrix_path', 'NO_INPUT')).stem}.log",
+        # Reference the param in a simple string format
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_design_matrix_{params.log_stem}.log",
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
