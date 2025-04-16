@@ -14,7 +14,6 @@ import subprocess
 from pathlib import Path
 import shlex # Import shlex for safer command splitting
 import datetime # Import datetime for timestamps
-from logging.handlers import FileHandler # Import FileHandler
 
 def setup_logging():
     """Configure basic logging for the script to console and file."""
