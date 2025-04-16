@@ -244,82 +244,86 @@ def aggregate_mageck_counts(
 ) -> Tuple[bool, Optional[str]]:
     """
     Merges individual MAGeCK sample count files into a single aggregated count table.
+    Assumes the first two columns are the keys (e.g., sgRNA and Gene) and the third is the count.
 
     Args:
         sample_count_files: A list of paths to individual sample .count.txt files.
-        output_path: The path where the merged tab-delimited count file should be saved.
+        output_path: The desired path for the aggregated output file.
 
     Returns:
-        Tuple (success_boolean, output_file_path_or_error_message).
+        Tuple (success_boolean, message_or_output_path).
     """
+    logger = logging.getLogger(__name__)
     logger.info(f"Aggregating {len(sample_count_files)} MAGeCK count files into {output_path}")
+
     if not sample_count_files:
-        logger.error("No sample count files provided for aggregation.")
-        return False, "No sample count files provided."
+        logger.warning("No sample count files provided for aggregation.")
+        # Create an empty file?
+        # For now, return True but indicate no files were processed.
+        return True, "No sample files provided, no aggregation performed."
 
     merged_df = None
-    try:
-        for i, file_path in enumerate(sample_count_files):
-            file = Path(file_path)
-            if not file.exists():
-                logger.error(f"Input count file not found: {file_path}")
-                return False, f"Input count file not found: {file_path}"
+    key_col_1 = None
+    key_col_2 = None
 
-            # Infer sample name from filename (e.g., samplename.count.txt -> samplename)
-            sample_name = file.name.replace(".count.txt", "")
-            if not sample_name:
-                 logger.warning(f"Could not infer sample name from {file.name}, using index {i}")
-                 sample_name = f"sample_{i}"
+    for i, file_path in enumerate(sample_count_files):
+        try:
+            df = pd.read_csv(file_path, sep='\t')
 
-            # Read the count file
-            df = pd.read_csv(file, sep='\t')
+            if len(df.columns) < 3:
+                 logger.error(f"Count file {file_path} has fewer than 3 columns. Cannot aggregate.")
+                 return False, f"File {file_path} has < 3 columns."
+            
+            current_key_col_1 = df.columns[0]
+            current_key_col_2 = df.columns[1]
+            current_count_col = df.columns[2]
 
-            # Expecting columns: sgRNA, Gene, and counts (sample name)
-            # MAGeCK count output *should* have the sample name as the count column header
-            # but let's verify and potentially rename if it's just 'counts' or similar
-            expected_cols = ['sgRNA', 'Gene']
-            if not all(col in df.columns for col in expected_cols):
-                logger.error(f"Count file {file_path} missing required columns: {expected_cols}. Found: {df.columns}")
-                return False, f"Count file {file_path} missing required columns."
+            # Extract sample name from filename
+            sample_name = Path(file_path).stem.replace('.count', '')
 
-            count_col_candidates = [col for col in df.columns if col not in expected_cols]
-            if len(count_col_candidates) != 1:
-                 logger.error(f"Count file {file_path} should have exactly one count column besides sgRNA and Gene. Found: {count_col_candidates}")
-                 return False, f"Incorrect number of count columns in {file_path}."
-
-            count_col = count_col_candidates[0]
-            # Rename the count column to the inferred sample name for clarity in merge
-            df.rename(columns={count_col: sample_name}, inplace=True)
-
-            # Keep only sgRNA, Gene, and the sample count column
-            df = df[['sgRNA', 'Gene', sample_name]]
-
-            # Merge with the main dataframe
-            if merged_df is None:
-                merged_df = df
+            if i == 0:
+                # Initialize with the first file
+                key_col_1 = current_key_col_1
+                key_col_2 = current_key_col_2
+                logger.info(f"Using merge keys: '{key_col_1}', '{key_col_2}'")
+                # Keep only the key columns and the count column
+                merged_df = df[[key_col_1, key_col_2, current_count_col]].copy()
+                # Rename the count column to the sample name immediately
+                merged_df.rename(columns={current_count_col: sample_name}, inplace=True)
             else:
-                # Check for consistency before merging
-                if not merged_df[['sgRNA', 'Gene']].equals(df[['sgRNA', 'Gene']]):
-                    logger.error(f"sgRNA and Gene columns differ between {sample_count_files[0]} and {file_path}. Cannot merge.")
-                    # TODO: Add more detailed diff logging here if needed
-                    return False, f"sgRNA/Gene mismatch between count files."
-                merged_df = pd.merge(merged_df, df, on=['sgRNA', 'Gene'], how='outer') # Use outer to be safe, check NaNs later if needed
+                # Check if key columns match the first file
+                if current_key_col_1 != key_col_1 or current_key_col_2 != key_col_2:
+                    logger.error(f"Key columns ('{current_key_col_1}', '{current_key_col_2}') in {file_path} do not match keys ('{key_col_1}', '{key_col_2}') from first file {sample_count_files[0]}. Cannot merge.")
+                    return False, "Key column names mismatch between count files."
 
-        if merged_df is None:
-            logger.error("Failed to create merged dataframe, merged_df is None after loop.")
-            return False, "Failed to create merged dataframe."
+                # Select keys and the count column
+                current_data = df[[key_col_1, key_col_2, current_count_col]].copy()
+                # Rename the count column before merging
+                current_data.rename(columns={current_count_col: sample_name}, inplace=True)
 
-        # Ensure output directory exists
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                # Check if key values/order match before merging (optional but recommended)
+                # This ensures rows correspond correctly. Requires keys to be sorted identically.
+                # if not merged_df[[key_col_1, key_col_2]].reset_index(drop=True).equals(current_data[[key_col_1, key_col_2]].reset_index(drop=True)):
+                #     logger.error(f"Order or content of keys '{key_col_1}', '{key_col_2}' differ between aggregated data and {file_path}. Ensure input files have identical, sorted guides.")
+                #     return False, "sgRNA/Gene key content/order mismatch between count files."
+                
+                # Merge the current sample's count column based on the key columns
+                merged_df = pd.merge(merged_df, current_data, on=[key_col_1, key_col_2], how='outer') # Use outer merge to keep all guides
 
-        # Save the merged dataframe
-        merged_df.to_csv(output_path, sep='\t', index=False)
+        except Exception as e:
+            logger.error(f"Error processing file {file_path}: {e}")
+            return False, f"Error reading or processing {file_path}: {e}"
+
+    # Save the final merged dataframe
+    try:
+        output_path_obj = Path(output_path)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+        merged_df.to_csv(output_path_obj, sep='\t', index=False, na_rep='NA') # Use NA for missing values
         logger.info(f"Successfully aggregated counts to {output_path}")
-        return True, str(output_path)
-
+        return True, str(output_path_obj)
     except Exception as e:
-        logger.exception(f"Error aggregating count files: {e}") # Use logger.exception to include traceback
-        return False, f"Error aggregating counts: {e}"
+        logger.error(f"Error saving aggregated count file {output_path}: {e}")
+        return False, f"Error saving output file: {e}"
 
 def run_mageck_rra(
     count_path: str,
