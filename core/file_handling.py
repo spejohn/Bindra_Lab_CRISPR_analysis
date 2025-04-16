@@ -60,7 +60,7 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
         # First check if this is a contrast table with duplicate column names
         # Use a more flexible CSV reader for initial inspection
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
                 header = f.readline().strip()
             
             # Check for duplicate column names in header
@@ -74,18 +74,20 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
             logging.info(f"Detected contrast table with duplicate columns")
             
             # Process file with duplicate columns using a custom approach
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
                 lines = f.readlines()
             
-            header = lines[0].strip().split(',')
+            # Clean header elements thoroughly after splitting
+            header = [col.strip() for col in lines[0].strip().split(',')] 
             data_rows = [line.strip().split(',') for line in lines[1:]]
             
             # Find unique column names and their positions
             unique_columns = []
             column_positions = {}
             
+            # Use the cleaned header for finding unique columns
             for i, col in enumerate(header):
-                col = col.strip()
+                # col = col.strip() # Already stripped above
                 if col not in column_positions:
                     column_positions[col] = []
                     unique_columns.append(col)
@@ -93,48 +95,68 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
             
             # Create a new dataframe with consolidated columns
             new_data = {}
-            df_raw = pd.DataFrame(data_rows)
+            # Create a temporary DataFrame from data_rows to handle varying row lengths safely
+            # Ensure columns match the *original* header length for correct indexing
+            df_raw = pd.DataFrame(data_rows, columns=header if len(header) == len(data_rows[0]) else None)
+            if df_raw.columns is None and len(header) > 0:
+                 # If columns couldn't be assigned automatically (ragged array), handle carefully
+                 logging.warning("CSV rows have inconsistent lengths. Handling consolidation carefully.")
+                 # Reconstruct df_raw column by column to avoid index errors
+                 temp_data_for_df = {i: [] for i in range(len(header))}
+                 for row in data_rows:
+                     for i in range(len(header)):
+                         temp_data_for_df[i].append(row[i] if i < len(row) else None)
+                 df_raw = pd.DataFrame(temp_data_for_df)
+                 df_raw.columns = header # Assign original header names
             
             for col in unique_columns:
                 positions = column_positions[col]
                 if len(positions) > 1:
                     # For duplicate columns, join the values with commas
                     joined_values = []
-                    for row in range(len(df_raw)):
+                    for row_idx in range(len(df_raw)):
                         row_values = []
                         for pos in positions:
                             if pos < len(df_raw.columns):  # Ensure position is valid
-                                value = df_raw.iloc[row, pos]
-                                if pd.notna(value) and value != '':
+                                value = df_raw.iloc[row_idx, pos]
+                                if pd.notna(value) and str(value).strip() != '': # Check for non-empty after stripping
                                     # Clean whitespace from the value
                                     cleaned_value = str(value).strip()
-                                    if cleaned_value:  # Only add non-empty values
-                                        row_values.append(cleaned_value)
-                        joined_values.append(','.join(row_values) if row_values else '')
+                                    row_values.append(cleaned_value) 
+                        joined_values.append(','.join(row_values) if row_values else '') # Use empty string if no valid values
                     new_data[col] = joined_values
                 else:
                     # For non-duplicate columns, just copy the values and clean whitespace
-                    if positions[0] < len(df_raw.columns):  # Ensure position is valid
-                        values = df_raw.iloc[:, positions[0]].values
-                        new_data[col] = [str(val).strip() if pd.notna(val) else val for val in values]
+                    pos = positions[0]
+                    if pos < len(df_raw.columns):  # Ensure position is valid
+                        # df_raw might have object dtype, handle potential NAs and types
+                        values = df_raw.iloc[:, pos].tolist() # Use tolist() for easier iteration
+                        new_data[col] = [str(val).strip() if pd.notna(val) and str(val).strip() != '' else '' for val in values]
+                    else:
+                         new_data[col] = [''] * len(df_raw) # Add empty column if somehow position is invalid
             
             # Create the consolidated dataframe
             df = pd.DataFrame(new_data)
+            # Ensure columns are in the order of unique_columns 
+            df = df[unique_columns] 
             
-            # Check if all required columns for contrast tables are present
+            # Check if all required columns for contrast tables are present *after* consolidation
+            # Use the CONTRAST_REQUIRED_COLUMNS list directly
             missing_columns = [col for col in CONTRAST_REQUIRED_COLUMNS if col not in df.columns]
             if missing_columns:
+                # Provide more context in the error message
                 raise ValueError(
-                    f"Contrast table missing required columns: {', '.join(missing_columns)}. "
-                    f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}"
+                    f"Contrast table missing required columns after consolidating duplicates: {', '.join(missing_columns)}. "
+                    f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}. "
+                    f"Columns found after consolidation: {df.columns.tolist()}"
                 )
             
-            logging.info(f"Consolidated duplicate columns in contrast table")
+            logging.info(f"Consolidated duplicate columns in contrast table. Final columns: {df.columns.tolist()}")
         else:
             # Try different approaches to read the CSV file
             try:
-                # Standard approach first
-                df = pd.read_csv(file_path)
+                # Standard approach first, handle BOM with encoding
+                df = pd.read_csv(file_path, encoding='utf-8-sig')
             except Exception as e:
                 logging.warning(f"Standard CSV reading failed, trying with error_bad_lines=False: {str(e)}")
                 try:
