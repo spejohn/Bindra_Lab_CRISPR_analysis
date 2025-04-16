@@ -6,6 +6,10 @@
 Snakefile for CRISPR Analysis Pipeline (Refactored)
 """
 
+# --- Rule Order Directive ---
+# Resolve ambiguity between rules producing {experiment}.count.txt
+ruleorder: aggregate_counts > convert_read_count_input
+
 import os
 import glob
 from pathlib import Path
