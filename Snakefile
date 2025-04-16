@@ -207,7 +207,7 @@ def get_fastq_basenames(experiment):
 
 # --- Rule to Convert Contrast CSV to TXT ---
 # This rule acts as an implicit validation trigger
-rule convert_contrasts:
+checkpoint convert_contrasts:
     input:
         # Define potential input CSV path
         csv=lambda wc: str(BASE_DIR / wc.experiment / "contrasts.csv"),
@@ -370,7 +370,8 @@ rule convert_read_count_input:
 ContrastCache = {}
 
 
-def get_contrast_names(wildcards):
+def get_contrast_names(wildcards, checkpoints):
+    """Gets contrast names by reading the output of the convert_contrasts checkpoint."""
     global ContrastCache
     experiment = wildcards.experiment
     cache_key = experiment
@@ -384,29 +385,33 @@ def get_contrast_names(wildcards):
         ):  # Empty list means no valid contrasts
             return []
         else:  # It was an error string/placeholder
-            return ContrastCache[cache_key]
+            # Rerun logic if it was a placeholder error
+            pass # Fall through to re-evaluate
 
-    # Path to the *output* of the conversion rule
-    converted_contrast_path = OUTPUT_DIR / experiment / "contrasts.txt"
+    # --- Access checkpoint output --- 
+    try:
+        # Use the checkpoints object to get the output path *after* the checkpoint runs
+        converted_contrast_path = checkpoints.convert_contrasts.get(experiment=experiment).output.txt
+    except Exception as e:
+        # Handle cases where the checkpoint might not have been run or failed
+        print(f"Error accessing checkpoint output for {experiment}: {e}")
+        ContrastCache[cache_key] = ["error_accessing_checkpoint"]
+        return ["error_accessing_checkpoint"]
+    # --- End Checkpoint Access ---
 
-    # We need the conversion rule to run first.
-    # This function might be called by 'rule all' before the file exists.
-    # A better approach might be a checkpoint for parsing.
-    # For now, rely on rule dependency and check existence.
     validation_info = get_validation_info(experiment)
     if validation_info["status"] == "failed":
         ContrastCache[cache_key] = ["validation_failed"]
         return ["validation_failed"]
 
-    if not converted_contrast_path.exists():
-        print(
-            f"Warning: Waiting for converted contrasts file: {converted_contrast_path}"
-        )
-        # Snakemake should handle this dependency via rule all input
-        # If called elsewhere prematurely, this might be an issue.
-        ContrastCache[cache_key] = ["conversion_pending"]
-        return ["conversion_pending"]
+    # File existence check might still be useful, but rely on checkpoint dependency primarily
+    # if not Path(converted_contrast_path).exists():
+    #     print(f"Warning: Converted contrasts file not found via checkpoint: {converted_contrast_path}")
+    #     ContrastCache[cache_key] = ["conversion_failed"]
+    #     return ["conversion_failed"]
+
     try:
+        # Ensure the path from the checkpoint output is used
         contrasts = parse_contrasts(str(converted_contrast_path))
         ContrastCache[cache_key] = contrasts  # Cache the list of dicts
         names = [c["name"] for c in contrasts] if contrasts else []
@@ -579,7 +584,8 @@ rule run_mageck_count_per_sample:
         except Exception as e:
             error_msg = f"Error running MAGeCK count for {wildcards.sample}: {e}"
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
-            with open(str(log), "w") as f: f.write(error_msg)
+            with open(str(log), "w") as f:
+                f.write(error_msg)
             raise e
 
 
@@ -1391,10 +1397,13 @@ rule generate_qc_report:
 # --- Rule All: Define Final Output Files ---
 
 
-def get_final_outputs():
+def get_final_outputs(wildcards, checkpoints):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
 
+    # Use wildcards.experiment if rule all defines experiment, otherwise iterate
+    # Assuming rule all doesn't have {experiment} wildcard for simplicity now
+    # We iterate over TARGET_EXPERIMENTS determined earlier
     for experiment in TARGET_EXPERIMENTS:
         validation_info = get_validation_info(experiment)
         if validation_info["status"] == "failed":
@@ -1403,10 +1412,13 @@ def get_final_outputs():
             )
             continue
 
-        contrasts = get_contrast_names(SimpleNamespace(experiment=experiment))
+        # Use the modified get_contrast_names function with checkpoints object
+        # Pass SimpleNamespace for wildcards as before if needed, or adjust based on how rule all calls this
+        contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints)
+
         if (
             not isinstance(contrasts, list) or ("error" in contrasts[0] if contrasts else False) # Handle error case and empty list
-        ): 
+        ):
             print(
                 f"Skipping contrast-specific outputs for {experiment} due to contrast parsing issues."
             )
@@ -1503,12 +1515,17 @@ def get_final_outputs():
 
 rule all:
     input:
-        get_final_outputs(),  # Use the function to gather all targets
+        # Use a lambda function to pass checkpoints object to get_final_outputs
+        lambda wildcards, checkpoints: get_final_outputs(wildcards, checkpoints),
     output:
         # Single flag file indicating completion of requested targets
         OUTPUT_DIR / "pipeline_complete.flag",
     run:
         print(f"[{datetime.now()}] CRISPR Analysis Pipeline Workflow Completed for targets:")
-        for f in input:
-            print(f"- {f}")
+        # Input might be complex now, iterate carefully or just log completion
+        # for f in input:
+        #     print(f"- {f}")
+        print(f"Input files generated (list might be long). Check output directory.")
         print(f"[{datetime.now()}] Completion flag: {output}")
+        # Create the flag file
+        Path(output[0]).touch()
