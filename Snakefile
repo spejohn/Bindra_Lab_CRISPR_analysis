@@ -727,6 +727,15 @@ rule run_mageck_rra_per_contrast:
     container:
         input.sif # Use the SIF file from input
     run:
+        # Imports needed within the run block scope
+        import pandas as pd
+        import shlex
+        from snakemake.shell import shell # Explicit import might help, though usually implicit
+        # Needed for logging inside run block
+        from datetime import datetime
+        from pathlib import Path
+
+
         # Parse contrasts inside the run block
         treatment_samples = ""
         control_samples = ""
@@ -823,6 +832,15 @@ rule run_drugz_per_contrast:
     container:
         input.sif # Use the SIF file from input
     run:
+        # Imports needed within the run block scope
+        import pandas as pd
+        import shlex
+        from snakemake.shell import shell # Explicit import
+        # Needed for logging inside run block
+        from datetime import datetime
+        from pathlib import Path
+
+
         # Parse contrasts inside the run block
         treatment_samples = ""
         control_samples = ""
