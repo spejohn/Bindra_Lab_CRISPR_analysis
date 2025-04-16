@@ -177,35 +177,8 @@ def get_validation_info(experiment):
 
 
 # --- Helper function to dynamically determine the converted contrast/design matrix path ---
-def get_converted_metadata_path(wildcards, metadata_type):
-    """Gets the expected output path for converted contrast or design matrix files."""
-    experiment = wildcards.experiment
-    validation_info = get_validation_info(experiment)
-    
-    input_key = None
-    output_generic_name = None # Fallback name if input path isn't found
-    if metadata_type == "contrast":
-        input_key = "contrasts_path"
-        output_generic_name = "contrasts.txt"
-    elif metadata_type == "design_matrix":
-        input_key = "design_matrix_path"
-        output_generic_name = "design_matrix.txt"
-    else:
-        raise ValueError(f"Unknown metadata_type: {metadata_type}")
-
-    input_path_str = validation_info.get(input_key)
-    
-    if not input_path_str:
-        # Input path not found (e.g., optional design matrix). 
-        # Return the generic path. Rules using this should handle missing optional inputs gracefully.
-        logging.warning(f"Input path for {metadata_type} not found for {experiment}. Using generic path for DAG construction.")
-        return OUTPUT_DIR / experiment / output_generic_name
-
-    # Input path found, construct output path based on input stem.
-    input_path = Path(input_path_str)
-    output_filename = f"{input_path.stem}.txt" # Always use input stem + .txt 
-        
-    return OUTPUT_DIR / experiment / output_filename
+# REMOVED - No longer needed with static output paths
+# def get_converted_metadata_path(wildcards, metadata_type): ... 
 
 
 # --- Helper to get FASTQ basenames for an experiment ---
@@ -248,13 +221,12 @@ checkpoint convert_contrasts:
         # Use the path identified by the validation function
         csv=lambda wc: get_validation_info(wc.experiment).get("contrasts_path"),
     output:
-        # Define output dynamically based on input file stem
-        txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
-    params:
-        # Calculate the dynamic part of the log name here
-        log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem
+        # Static output path
+        txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+    # params: # Removed - no longer needed for static log path
+    #     log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem
     log:
-        # TEMPORARY: Use a static log path for troubleshooting
+        # Static log path
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts.log",
     run:
         validation_info = get_validation_info(wildcards.experiment)
@@ -273,10 +245,10 @@ checkpoint convert_contrasts:
             try:
                 input_csv_path = validation_info["contrasts_path"]
                 if Path(input_csv_path).suffix.lower() == ".csv":
-                    # Pass the FULL output path (dynamically determined by output directive)
+                    # Pass the FULL static output path
                     convert_file_to_tab_delimited(
                         file_path=input_csv_path,
-                        output_path=str(output.txt), # Pass full path
+                        output_path=str(output.txt), # Pass static path
                     )
                 else:
                     print(
@@ -298,14 +270,13 @@ rule convert_design_matrix:
         # Use the path identified by the validation function
         csv=lambda wc: get_validation_info(wc.experiment).get("design_matrix_path")
     output:
-        # Define output dynamically based on input file stem (if input exists and is csv)
-        txt=lambda wc: get_converted_metadata_path(wc, "design_matrix"),
-    params:
-        # Calculate the dynamic part of the log name here
-        log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('design_matrix_path', 'NO_INPUT')).stem
+        # Static output path
+        txt=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
+    # params: # Removed - no longer needed for static log path
+    #     log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('design_matrix_path', 'NO_INPUT')).stem
     log:
-        # Reference the param in a simple string format
-        OUTPUT_DIR / "{experiment}" / "logs" / "convert_design_matrix_{params.log_stem}.log",
+        # Static log path
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_design_matrix.log",
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
@@ -322,10 +293,10 @@ rule convert_design_matrix:
             if Path(input_path).suffix.lower() == ".csv":
                 print(f"[{datetime.now()}] {wildcards.experiment}: Converting design matrix...")
                 try:
-                    # Pass the FULL output path (dynamically determined)
+                    # Pass the FULL static output path
                     convert_file_to_tab_delimited(
                         file_path=input_path,
-                        output_path=str(output.txt), # Pass full path
+                        output_path=str(output.txt), # Pass static path
                     )
                 except Exception as e:
                     print(
@@ -734,8 +705,8 @@ def format_options(options_dict):
 rule run_mageck_rra_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Depend on the *dynamically named* converted contrast file
-        contrasts_txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
+        # Depend on the static contrast file name
+        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
         sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         gene_summary=OUTPUT_DIR
@@ -814,8 +785,8 @@ rule run_mageck_rra_per_contrast:
 rule run_mageck_mle_per_experiment:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Design matrix input also needs to be dynamic
-        design_matrix=lambda wc: get_converted_metadata_path(wc, "design_matrix"),
+        # Depend on the static design matrix file name
+        design_matrix=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
         sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         # Experiment-level outputs in analysis_results
@@ -853,8 +824,8 @@ rule run_mageck_mle_per_experiment:
 rule run_drugz_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Depend on the *dynamically named* converted contrast file
-        contrasts_txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
+        # Depend on the static contrast file name
+        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
         sif=DRUGZ_SIF, # Depend on the specific SIF file
     output:
         drugz_results=OUTPUT_DIR
