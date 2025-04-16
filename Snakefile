@@ -27,7 +27,7 @@ import logging  # Added for logging
 try:
     # Use absolute import path assuming Snakefile is at root
     from core.validation import validate_experiment_structure
-    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts, make_count_table, convert_results_to_csv, aggregate_mageck_summaries
+    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts, make_count_table, convert_results_to_csv, aggregate_mageck_summaries, parse_contrast_names_from_csv
     from core.analysis_steps import (
         run_fastqc,
         run_mageck_count,
@@ -408,67 +408,61 @@ rule convert_read_count_input:
 ContrastCache = {}
 
 
-# def get_contrast_names(wildcards, checkpoints=None):
-# Modify signature: remove checkpoints, add contrast_txt_path
-def get_contrast_names(wildcards, contrast_txt_path: str):
-    """Gets contrast names by reading the output of the convert_contrasts rule."""
+# Modify signature: accept input CSV path
+# def get_contrast_names(wildcards, contrast_txt_path: str):
+def get_contrast_names(wildcards, contrast_csv_path: str):
+    """Gets contrast names by parsing the INPUT contrast CSV file."""
     global ContrastCache
     experiment = wildcards.experiment
-    # Use the provided path as the cache key basis
-    cache_key = f"{experiment}_{contrast_txt_path}"
+    # Use the INPUT path as the cache key basis
+    cache_key = f"{experiment}_{contrast_csv_path}" # Use CSV path in key
     if cache_key in ContrastCache:
-        # Check if cached result was an error placeholder
-        if isinstance(ContrastCache[cache_key], list) and ContrastCache[cache_key]:
-            # Return only valid names
-            return [c["name"] for c in ContrastCache[cache_key] if isinstance(c, dict)]
-        elif isinstance(
-            ContrastCache[cache_key], list
-        ):  # Empty list means no valid contrasts
-            return []
-        else:  # It was an error string/placeholder
-            # Rerun logic if it was a placeholder error
-            pass # Fall through to re-evaluate
-
-    # REMOVED Checkpoint access logic
-    # try:
-    #     # Use the checkpoints object ONLY if it's provided
-    #     if checkpoints is None:
-    #         # ... error handling ...
-    #     converted_contrast_path = checkpoints.convert_contrasts.get(experiment=experiment).output.txt
-    # except AttributeError:
-    #     # ... error handling ...
-    # except Exception as e:
-    #     # ... error handling ...
-    # --- End Checkpoint Access ---
-    converted_contrast_path = contrast_txt_path # Use the path passed as argument
-
+        # Return cached names (list of strings)
+        cached_result = ContrastCache[cache_key]
+        if isinstance(cached_result, list):
+             # Check if it was an error marker (a list containing a single string with 'error')
+            if not (len(cached_result) == 1 and isinstance(cached_result[0], str) and 'error' in cached_result[0].lower()):
+                return cached_result # Return valid cached list of names
+        # Fall through to re-evaluate if cache contained error or invalid type
+        
+    # Get validation info (needed for context, though path is passed directly)
     validation_info = get_validation_info(experiment)
     if validation_info["status"] == "failed":
-        # Still useful to prevent parsing if validation failed upstream
-        ContrastCache[cache_key] = ["validation_failed"]
-        return ["validation_failed"]
+        ContrastCache[cache_key] = ["error_validation_failed_upstream"] # Cache error marker
+        return ["error_validation_failed_upstream"] 
 
-    # File existence check (the rule requesting this function's output 
-    # should depend on contrasts.txt, making this check potentially redundant,
-    # but good for robustness)
-    if not Path(converted_contrast_path).exists():
-        print(f"Warning: Provided contrasts file not found: {converted_contrast_path}")
-        ContrastCache[cache_key] = ["contrast_file_missing"]
-        return ["contrast_file_missing"]
+    # Get the INPUT csv path from validation info to pass to the parsing function
+    input_csv_path = validation_info.get("contrasts_path")
+    if not input_csv_path:
+        print(f"ERROR: Contrast CSV path not found in validation info for {experiment}")
+        ContrastCache[cache_key] = ["error_no_csv_path_in_validation"]
+        return ["error_no_csv_path_in_validation"]
 
     try:
-        # Ensure the path passed as argument is used
-        contrasts = parse_contrasts(str(converted_contrast_path))
-        ContrastCache[cache_key] = contrasts  # Cache the list of dicts
-        names = [c["name"] for c in contrasts] if contrasts else []
-        if not names:
-            print(f"Warning: No valid contrasts parsed for {experiment} from {converted_contrast_path}.")
-            return []  # Return empty list
+        # Import the new CSV parsing function
+        # Ensure this import is resolvable
+        from core.file_handling import parse_contrast_names_from_csv 
+        
+        # Call the function to get names from the INPUT CSV
+        # names = parse_contrast_names_from_csv(contrast_csv_path)
+        names = parse_contrast_names_from_csv(input_csv_path) # Pass the input path
+        
+        ContrastCache[cache_key] = names # Cache the list of names (or empty list)
         return names
+    except ImportError:
+        print(f"ERROR: Could not import parse_contrast_names_from_csv from core.file_handling")
+        ContrastCache[cache_key] = ["error_import_failed"]
+        return ["error_import_failed"]
+    except FileNotFoundError:
+        # This case should ideally be caught by validation earlier
+        print(f"ERROR: Input contrast CSV not found by parse_contrast_names_from_csv: {contrast_csv_path}")
+        ContrastCache[cache_key] = ["error_csv_not_found"]
+        return ["error_csv_not_found"]
     except Exception as e:
-        print(f"Error parsing contrasts file {converted_contrast_path} for {experiment}: {e}")
-        ContrastCache[cache_key] = ["error_parsing_contrasts"]
-        return ["error_parsing_contrasts"]
+        # Catch other parsing errors from the new function
+        print(f"Error parsing contrast names from CSV {contrast_csv_path} for {experiment}: {e}")
+        ContrastCache[cache_key] = ["error_parsing_csv"] # Cache error marker
+        return ["error_parsing_csv"]
 
 
 # --- Function to get the primary FASTQ file for a sample basename ---
@@ -1557,19 +1551,31 @@ def get_final_outputs(wildcards):
             )
             continue
 
+        # Determine the path to the INPUT contrast CSV file from validation info
+        # contrast_txt_path = OUTPUT_DIR / experiment / "contrasts.txt"
+        input_contrast_csv_path = validation_info.get("contrasts_path")
+
+        # Check if the input path was found during validation
+        if not input_contrast_csv_path:
+             print(f"ERROR: Could not determine input contrast CSV path for {experiment} from validation. Skipping contrast-dependent outputs.")
+             contrasts = ["error_no_csv_path_found"]
+        else:
+            # Use the modified get_contrast_names function 
+            # Pass the INPUT CSV path 
+            print(f"Calling get_contrast_names for {experiment} with INPUT path={input_contrast_csv_path}...") # DEBUG
+            # contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), contrast_txt_path=str(contrast_txt_path))
+            contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), contrast_csv_path=input_contrast_csv_path) # Pass CSV path
+            print(f"Contrasts for {experiment}: {contrasts}") # DEBUG
+
+        # The rest of the function uses the `contrasts` list as before
+        # Error handling for contrasts list is already present
+
         # --- Explicitly depend on the converted contrasts.txt for this experiment ---
         # This ensures the convert_contrasts checkpoint runs before rule all input is finalized
         contrast_txt_path = OUTPUT_DIR / experiment / "contrasts.txt"
         print(f"Adding explicit dependency: {contrast_txt_path}") # DEBUG
         final_files.append(contrast_txt_path)
         # --------------------------------------------------------------------------
-
-        # Use the modified get_contrast_names function 
-        # Pass the determined path instead of checkpoints object
-        print(f"Calling get_contrast_names for {experiment} with path={contrast_txt_path}...") # DEBUG
-        # contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints) # Pass checkpoints along
-        contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), contrast_txt_path=str(contrast_txt_path))
-        print(f"Contrasts for {experiment}: {contrasts}") # DEBUG
 
         if (
             not isinstance(contrasts, list) or (contrasts and "error" in contrasts[0]) # Handle error case and empty list

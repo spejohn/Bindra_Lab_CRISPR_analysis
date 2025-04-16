@@ -776,6 +776,58 @@ def parse_contrasts(contrasts_txt_path: str) -> List[Dict[str, Union[str, List[s
         raise ValueError(f"Error parsing contrasts file {contrasts_txt_path}: {e}") from e 
 
 
+# --- New Function to Parse Contrast Names from INPUT CSV ---
+def parse_contrast_names_from_csv(contrast_csv_path: str) -> List[str]:
+    """
+    Parses an input contrast CSV file to extract only the contrast names.
+    Designed for use during DAG construction when only names are needed.
+
+    Args:
+        contrast_csv_path: Path to the input contrast CSV file.
+
+    Returns:
+        A list of contrast names (strings).
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file is missing the 'contrast' column or is improperly formatted.
+        Exception: For other pandas reading errors.
+    """
+    logger = logging.getLogger(__name__)
+    file_path = Path(contrast_csv_path)
+
+    if not file_path.is_file():
+        raise FileNotFoundError(f"Input contrast CSV not found: {contrast_csv_path}")
+
+    try:
+        # Read only the necessary column, handle potential BOM
+        df = pd.read_csv(file_path, usecols=['contrast'], encoding='utf-8-sig', skipinitialspace=True)
+        logger.info(f"Read contrast names from {file_path}")
+
+        # Check if 'contrast' column was actually found (usecols is a suggestion)
+        if 'contrast' not in df.columns:
+             raise ValueError(f"Contrasts CSV file {contrast_csv_path} must contain column: 'contrast'. Found: {df.columns.tolist()}")
+
+        # Extract names, convert to string, strip whitespace, filter out empty names
+        contrast_names = [str(name).strip() for name in df['contrast'].tolist() if str(name).strip()]
+
+        if not contrast_names:
+             logger.warning(f"No valid contrast names found in {contrast_csv_path}")
+
+        logger.info(f"Successfully parsed {len(contrast_names)} contrast names from {contrast_csv_path}")
+        return contrast_names
+
+    except ValueError as e:
+        # Catch specific errors like missing column
+        logger.error(f"Format error parsing contrast names from CSV {contrast_csv_path}: {e}")
+        raise # Re-raise ValueError
+    except Exception as e:
+        logger.error(f"Error parsing contrast names from CSV {contrast_csv_path}: {e}")
+        # Wrap other exceptions in a ValueError for consistent handling upstream?
+        # Or just re-raise the original exception.
+        raise # Re-raise original exception
+
+
 # --- New Function to Aggregate MAGeCK Count Summaries ---
 @retry_operation(max_attempts=3, delay=2)
 def aggregate_mageck_summaries(summary_files: List[str], output_path: str) -> tuple[bool, str]:
