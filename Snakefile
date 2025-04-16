@@ -409,7 +409,7 @@ rule convert_read_count_input:
 ContrastCache = {}
 
 
-def get_contrast_names(wildcards, checkpoints):
+def get_contrast_names(wildcards, checkpoints=None):
     """Gets contrast names by reading the output of the convert_contrasts checkpoint."""
     global ContrastCache
     experiment = wildcards.experiment
@@ -429,8 +429,19 @@ def get_contrast_names(wildcards, checkpoints):
 
     # --- Access checkpoint output --- 
     try:
-        # Use the checkpoints object to get the output path *after* the checkpoint runs
+        # Use the checkpoints object ONLY if it's provided
+        if checkpoints is None:
+            # This indicates a potential issue in DAG construction or how rule all is called
+            print(f"Warning: Checkpoints object not available when calling get_contrast_names for {experiment}. Cannot determine converted contrast path.")
+            ContrastCache[cache_key] = ["error_checkpoints_missing"]
+            return ["error_checkpoints_missing"]
+            
         converted_contrast_path = checkpoints.convert_contrasts.get(experiment=experiment).output.txt
+    except AttributeError:
+        # Handle case where checkpoints object is present but .convert_contrasts doesn't exist (shouldn't happen if checkpoint defined)
+        print(f"Error: Checkpoint 'convert_contrasts' not found in checkpoints object for {experiment}.")
+        ContrastCache[cache_key] = ["error_checkpoint_attribute"]
+        return ["error_checkpoint_attribute"]
     except Exception as e:
         # Handle cases where the checkpoint might not have been run or failed
         print(f"Error accessing checkpoint output for {experiment}: {e}")
@@ -1530,7 +1541,7 @@ rule generate_qc_report:
 # --- Rule All: Define Final Output Files ---
 
 
-def get_final_outputs(wildcards, checkpoints):
+def get_final_outputs(wildcards, checkpoints=None):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
     print("--- Entering get_final_outputs ---") # DEBUG
@@ -1550,9 +1561,16 @@ def get_final_outputs(wildcards, checkpoints):
             )
             continue
 
+        # --- Explicitly depend on the converted contrasts.txt for this experiment ---
+        # This ensures the convert_contrasts checkpoint runs before rule all input is finalized
+        contrast_txt_path = OUTPUT_DIR / experiment / "contrasts.txt"
+        print(f"Adding explicit dependency: {contrast_txt_path}") # DEBUG
+        final_files.append(contrast_txt_path)
+        # --------------------------------------------------------------------------
+
         # Use the modified get_contrast_names function with checkpoints object
         # Pass SimpleNamespace for wildcards as before if needed, or adjust based on how rule all calls this
-        print(f"Calling get_contrast_names for {experiment}...") # DEBUG
+        print(f"Calling get_contrast_names for {experiment} with checkpoints={checkpoints is not None}...") # DEBUG
         contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints)
         print(f"Contrasts for {experiment}: {contrasts}") # DEBUG
 
@@ -1570,6 +1588,7 @@ def get_final_outputs(wildcards, checkpoints):
             print(f"  Checking contrast: {contrast}") # DEBUG
             # Add RRA results if not skipped
             if not config.get("skip_rra", False):
+                # DEPEND ON CONVERTED CSV
                 rra_file = OUTPUT_DIR / experiment / f"{contrast}_gMGK.csv"
                 print(f"    Adding RRA target: {rra_file}") # DEBUG
                 final_files.append(rra_file)
@@ -1578,6 +1597,7 @@ def get_final_outputs(wildcards, checkpoints):
 
             # Add DrugZ results if not skipped
             if not config.get("skip_drugz", False):
+                # DEPEND ON CONVERTED CSV
                 dz_file = OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
                 print(f"    Adding DrugZ target: {dz_file}") # DEBUG
                 final_files.append(dz_file)
@@ -1588,22 +1608,23 @@ def get_final_outputs(wildcards, checkpoints):
         print(f"Checking MLE results for {experiment}...") # DEBUG
         # Check for *converted* design matrix in output dir
         design_matrix_path = OUTPUT_DIR / experiment / "design_matrix.txt"
-        # Check if the *rule output* design matrix exists and is non-empty
-        design_output_exists = design_matrix_path.exists() # and design_matrix_path.stat().st_size > 0 # Size check might be too strict initially
+        # Check if the *rule output* design matrix exists
+        design_output_exists = design_matrix_path.exists()
         print(f"  MLE Check: skip_mle={config.get('skip_mle', False)}, design_matrix_exists={design_output_exists} ({design_matrix_path})") # DEBUG
 
         if not config.get("skip_mle", False) and design_output_exists:
-             # Add NATIVE MLE outputs (now experiment-level)
-            mle_gene_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.gene_summary.txt"
-            mle_sgrna_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.sgrna_summary.txt"
-            mle_beta_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.beta_coefficients.txt"
-            # Add CONVERTED MLE CSV (at experiment level)
-            mle_csv = OUTPUT_DIR / experiment / f"{experiment}_gMLE.csv"
-            print(f"    Adding MLE targets: {mle_gene_native}, {mle_sgrna_native}, {mle_beta_native}, {mle_csv}") # DEBUG
-            final_files.append(mle_gene_native)
-            final_files.append(mle_sgrna_native)
-            final_files.append(mle_beta_native)
-            final_files.append(mle_csv)
+             # REMOVE NATIVE MLE OUTPUTS AS TARGETS
+             # mle_gene_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.gene_summary.txt"
+             # mle_sgrna_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.sgrna_summary.txt"
+             # mle_beta_native = OUTPUT_DIR / experiment / "analysis_results" / f"{experiment}_MLE.beta_coefficients.txt"
+             # DEPEND ON CONVERTED MLE CSV (at experiment level)
+             mle_csv = OUTPUT_DIR / experiment / f"{experiment}_gMLE.csv"
+             # print(f"    Adding MLE targets: {mle_gene_native}, {mle_sgrna_native}, {mle_beta_native}, {mle_csv}") # DEBUG
+             print(f"    Adding MLE target: {mle_csv}") # DEBUG
+             # final_files.append(mle_gene_native)
+             # final_files.append(mle_sgrna_native)
+             # final_files.append(mle_beta_native)
+             final_files.append(mle_csv)
         else:
             print(f"    Skipping MLE targets.") # DEBUG
 
