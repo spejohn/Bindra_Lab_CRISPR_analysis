@@ -227,18 +227,20 @@ checkpoint convert_contrasts:
             print(f"[{datetime.now()}] {wildcards.experiment}: {error_msg}")
             with open(log[0], "w") as f:
                 f.write(error_msg)
+            # Exit cleanly if validation failed
+            sys.exit(0)
         else:
             print(f"[{datetime.now()}] {wildcards.experiment}: Converting contrasts...")
             # Output dir is the experiment dir
-            output_dir_path = Path(output.txt).parent
+            output_dir_path = Path(output.txt).parent # Get directory from output file
             output_dir_path.mkdir(parents=True, exist_ok=True)
             try:
                 input_csv_path = validation_info["contrasts_path"]
                 if Path(input_csv_path).suffix.lower() == ".csv":
-                    # Pass the specific output path to the function
+                    # Pass the output directory, not the full output path
                     convert_file_to_tab_delimited(
                         file_path=input_csv_path,
-                        output_path=str(output.txt),  # Specify exact output path
+                        output_dir=str(output_dir_path), # Pass directory
                     )
                 else:
                     print(
@@ -249,14 +251,14 @@ checkpoint convert_contrasts:
                 print(f"[{datetime.now()}] ERROR converting contrasts for {wildcards.experiment}: {e}")
                 with open(log[0], "w") as f:
                     f.write(f"Error: {e}")
-                raise e
+                raise e # Re-raise exception to fail the job
 
 
 # --- Rule to Convert Design Matrix CSV to TXT (Conditional) ---
 rule convert_design_matrix:
     input:
-        # Define potential input CSV path
-        csv=lambda wc: str(BASE_DIR / wc.experiment / "design_matrix.csv"),
+        # Use the path identified by the validation function
+        csv=lambda wc: get_validation_info(wc.experiment).get("design_matrix_path")
     output:
         # Place converted file directly in experiment output dir
         txt=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
@@ -269,17 +271,19 @@ rule convert_design_matrix:
             print(
                 f"[{datetime.now()}] {wildcards.experiment}: Skipping design matrix conversion due to validation failure."
             )
+            sys.exit(0) # Exit cleanly if validation failed
         elif validation_info.get("design_matrix_path"):
             # Design matrix exists, proceed with conversion
             input_path = validation_info["design_matrix_path"]
-            output_dir_path = Path(output.txt).parent
+            output_dir_path = Path(output.txt).parent # Get directory from output file
             output_dir_path.mkdir(parents=True, exist_ok=True)
             if Path(input_path).suffix.lower() == ".csv":
                 print(f"[{datetime.now()}] {wildcards.experiment}: Converting design matrix...")
                 try:
+                    # Pass the output directory, not the full output path
                     convert_file_to_tab_delimited(
                         file_path=input_path,
-                        output_path=str(output.txt),  # Specify exact output path
+                        output_dir=str(output_dir_path), # Pass directory
                     )
                 except Exception as e:
                     print(
@@ -287,7 +291,7 @@ rule convert_design_matrix:
                     )
                     with open(log[0], "w") as f:
                         f.write(f"Error: {e}")
-                    raise e
+                    raise e # Re-raise exception to fail the job
             else:
                 print(
                     f"[{datetime.now()}] {wildcards.experiment}: Input design matrix file {input_path} is already .txt, copying."
@@ -297,6 +301,7 @@ rule convert_design_matrix:
             print(
                 f"[{datetime.now()}] {wildcards.experiment}: Design matrix not found, skipping conversion."
             )
+            sys.exit(0) # Exit cleanly if no design matrix found
 
 
 # --- Helper function for conditional RC input ---
