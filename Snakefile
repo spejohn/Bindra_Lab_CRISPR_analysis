@@ -1692,16 +1692,21 @@ def get_final_outputs(wildcards, checkpoints=None):
 
 rule all:
     input:
-        # Use a lambda function to pass checkpoints object to get_final_outputs
-        lambda wildcards, checkpoints: get_final_outputs(wildcards, checkpoints),
+        # Explicitly list outputs that depend on the checkpoint
+        contrast_files=expand(
+            OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+            experiment=TARGET_EXPERIMENTS # Use the globally determined list
+        ),
+        # Use lambda for the rest of the outputs
+        other_files=lambda wildcards, checkpoints: get_final_outputs(wildcards, checkpoints),
     output:
         # Single flag file indicating completion of requested targets
         OUTPUT_DIR / "pipeline_complete.flag",
     run:
         print(f"[{datetime.now()}] CRISPR Analysis Pipeline Workflow Completed for targets:")
-        # Input might be complex now, iterate carefully or just log completion
-        # for f in input:
-        #     print(f"- {f}")
+        # Input is now structured, access specific parts if needed
+        # print(f"Required contrast files: {input.contrast_files}") 
+        # print(f"Other required files: {input.other_files}")
         print(f"Input files generated (list might be long). Check output directory.")
         print(f"[{datetime.now()}] Completion flag: {output}")
         # Create the flag file
