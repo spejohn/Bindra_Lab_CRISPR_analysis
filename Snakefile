@@ -513,7 +513,8 @@ rule run_fastqc_per_sample:
         mem_mb=24000,
         time_min=120
     container:
-        input.sif # Use the SIF file from input
+        # Directly reference the SIF path variable
+        FASTQC_SIF
     shell:
         # Create output directory first
         r"""
@@ -551,7 +552,8 @@ rule run_mageck_count_per_sample:
         mem_mb=8000, # Adjust as needed
         time_min=120 # Adjust as needed
     container:
-        input.sif
+        # Directly reference the SIF path variable
+        MAGECK_SIF
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] != "valid" or validation_info.get("data_type") != "fastq":
@@ -752,7 +754,8 @@ rule run_mageck_rra_per_contrast:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
     container:
-        input.sif # Use the SIF file from input
+        # Directly reference the SIF path variable
+        MAGECK_SIF
     run:
         # Imports needed within the run block scope
         import pandas as pd
@@ -820,7 +823,8 @@ rule run_mageck_mle_per_experiment:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_mle_{experiment}.log", # Log per experiment
     threads: 1 # MAGeCK MLE can sometimes use more, but often limited by I/O
     container:
-        input.sif # Use the SIF file from input
+        # Directly reference the SIF path variable
+        MAGECK_SIF
     shell:
         # Ensure output directory exists first
         r"""
@@ -857,7 +861,8 @@ rule run_drugz_per_contrast:
         OUTPUT_DIR / "{experiment}" / "logs" / "drugz_{contrast}.log",
     threads: 1
     container:
-        input.sif # Use the SIF file from input
+        # Directly reference the SIF path variable
+        DRUGZ_SIF
     run:
         # Imports needed within the run block scope
         import pandas as pd
