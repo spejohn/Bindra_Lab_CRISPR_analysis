@@ -567,19 +567,19 @@ rule run_mageck_count_per_sample:
     shell:
         # Ensure output directory exists first (Snakemake usually handles this, but belt-and-suspenders)
         # The actual command runs inside the container invoked by Snakemake
-        r\"\"\"
+        r"""
         mkdir -p $(dirname {output.count_txt}); 
-        mageck count \\
-            --fastq {input.r1} \\
-            $(test -n \"{input.r2}\" && echo "--fastq-2 {input.r2}") \\
-            --list-seq {input.library} \\
-            --sample-label {wildcards.sample} \\
-            --output-prefix {wildcards.sample} \\
-            {params.count_options_str} \\
-            > {log} 2>&1 && \\
-        mv {wildcards.sample}.count.txt {output.count_txt} && \\
+        mageck count \
+            --fastq {input.r1} \
+            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
+            --list-seq {input.library} \
+            --sample-label {wildcards.sample} \
+            --output-prefix {wildcards.sample} \
+            {params.count_options_str} \
+            > {log} 2>&1 && \
+        mv {wildcards.sample}.count.txt {output.count_txt} && \
         mv {wildcards.sample}.countsummary.txt {output.summary}
-        \"\"\"
+        """
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
@@ -735,7 +735,7 @@ rule run_mageck_rra_per_contrast:
         control_samples = ""
         try:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
-            df = pd.read_csv(input.contrasts_txt, sep='\\t')
+            df = pd.read_csv(input.contrasts_txt, sep='\\t') # Needs double escape for regex/string
             contrast_row = df[df['name'] == wildcards.contrast]
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
@@ -842,7 +842,7 @@ rule run_drugz_per_contrast:
         control_samples = ""
         try:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
-            df = pd.read_csv(input.contrasts_txt, sep='\\t')
+            df = pd.read_csv(input.contrasts_txt, sep='\\t') # Needs double escape for regex/string
             contrast_row = df[df['name'] == wildcards.contrast]
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
