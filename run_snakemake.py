@@ -125,6 +125,13 @@ def run_snakemake(args):
         base_dir_path = Path(args.base_dir).resolve()
         # Use the original default logic
         output_dir = base_dir_path.parent / "crispr_analysis_pipeline_results"
+    else:
+        # Ensure output_dir passed via argument is resolved to absolute path
+        output_dir = Path(output_dir).resolve()
+    
+    # Construct the expected final flag file path
+    final_flag_file = output_dir / "pipeline_complete.flag"
+    logging.info(f"Expecting final flag file at: {final_flag_file}")
 
     # Determine number of cores to use for Snakemake scheduler
     # Use the provided --cores arg if given, otherwise default to a high number for cluster submission
@@ -174,10 +181,16 @@ def run_snakemake(args):
     if args.dryrun:
         cmd_parts.append("--dryrun")
         
-    # Add positional targets if provided
+    # Add positional targets if provided by user
     if args.targets:
         cmd_parts.extend(args.targets)
-        logging.info(f"Adding specific targets: {args.targets}")
+        logging.info(f"Adding specific user targets: {args.targets}")
+
+    # --- Always explicitly request the final flag file target --- 
+    # This helps ensure Snakemake evaluates the full DAG for rule all
+    cmd_parts.append(str(final_flag_file))
+    logging.info(f"Explicitly requesting final target: {final_flag_file}")
+    # --- End explicit target ---
 
     # Join the command parts into a string
     # cmd = " ".join(shlex.quote(part) for part in cmd_parts) # Use shlex.quote for safety 
