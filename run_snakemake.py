@@ -112,14 +112,15 @@ def run_snakemake(args):
         output_dir = base_dir_path.parent / "crispr_analysis_pipeline_results"
 
     # Determine number of cores to use for Snakemake scheduler
-    cores = args.cores if args.cores is not None else 1 # can set to node default with get_available_cores()
-    logging.info(f"Using {cores} CPU cores for Snakemake scheduler")
+    # Use the provided --cores arg if given, otherwise default to a high number for cluster submission
+    cores = args.cores if args.cores is not None else 100 # Allow high concurrency for cluster/profile
+    logging.info(f"Using {cores} max concurrent jobs for Snakemake scheduler (-j)")
     
     # Build Snakemake command parts (as a list for better handling)
     cmd_parts = [
         "snakemake",
         "-s", str(snakefile),  # Snakefile path
-        "-j", str(cores),      # Number of scheduler cores/jobs (distinct from rule threads for cluster)
+        "-j", str(cores),      # Max concurrent jobs for Snakemake scheduler
         "--config", # Start config definitions
         f"base_dir={args.base_dir}", # Pass base_dir
         f"output_dir={output_dir}",
@@ -141,8 +142,7 @@ def run_snakemake(args):
     if args.profile:
         cmd_parts.extend(["--profile", args.profile])
         logging.info(f"Using profile: {args.profile}")
-        # The profile now implicitly activates the executor if --executor isn't also given
-        # Explicitly adding --executor is clearer
+        # The profile should handle the executor, but explicitly adding it is clearer.
         cmd_parts.extend(["--executor", "slurm"])
         logging.info(f"Using executor: slurm (via profile or explicit flag)")
 
@@ -150,7 +150,7 @@ def run_snakemake(args):
     if args.use_apptainer:
         cmd_parts.append("--use-apptainer")
         # Optionally add Apptainer specific args if needed
-        # cmd_parts.extend(["--apptainer-args", "'--bind /path/on/host:/path/in/container'"]) 
+        # cmd_parts.extend(["--apptainer-args", "'--bind /path/on/host:/path/in/container'"])
     elif args.use_docker:
         cmd_parts.append("--use-docker")
     # else: Default behavior is no container flag, snakemake runs locally
