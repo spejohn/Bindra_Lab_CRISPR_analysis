@@ -215,16 +215,15 @@ def get_fastq_basenames(experiment):
     return list(basenames)
 
 
-# --- Rule to Convert Contrast CSV to TXT ---
-checkpoint convert_contrasts:
+# --- Rule to Convert Contrast CSV to TXT (NOW A REGULAR RULE) ---
+# checkpoint convert_contrasts:
+rule convert_contrasts:
     input:
         # Use the path identified by the validation function
         csv=lambda wc: get_validation_info(wc.experiment).get("contrasts_path"),
     output:
         # Static output path
         txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
-    # params: # Removed - no longer needed for static log path
-    #     log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem
     log:
         # Static log path
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts.log",
@@ -409,11 +408,14 @@ rule convert_read_count_input:
 ContrastCache = {}
 
 
-def get_contrast_names(wildcards, checkpoints=None):
-    """Gets contrast names by reading the output of the convert_contrasts checkpoint."""
+# def get_contrast_names(wildcards, checkpoints=None):
+# Modify signature: remove checkpoints, add contrast_txt_path
+def get_contrast_names(wildcards, contrast_txt_path: str):
+    """Gets contrast names by reading the output of the convert_contrasts rule."""
     global ContrastCache
     experiment = wildcards.experiment
-    cache_key = experiment
+    # Use the provided path as the cache key basis
+    cache_key = f"{experiment}_{contrast_txt_path}"
     if cache_key in ContrastCache:
         # Check if cached result was an error placeholder
         if isinstance(ContrastCache[cache_key], list) and ContrastCache[cache_key]:
@@ -427,50 +429,44 @@ def get_contrast_names(wildcards, checkpoints=None):
             # Rerun logic if it was a placeholder error
             pass # Fall through to re-evaluate
 
-    # --- Access checkpoint output --- 
-    try:
-        # Use the checkpoints object ONLY if it's provided
-        if checkpoints is None:
-            # This indicates a potential issue in DAG construction or how rule all is called
-            print(f"Warning: Checkpoints object not available when calling get_contrast_names for {experiment}. Cannot determine converted contrast path.")
-            ContrastCache[cache_key] = ["error_checkpoints_missing"]
-            return ["error_checkpoints_missing"]
-            
-        converted_contrast_path = checkpoints.convert_contrasts.get(experiment=experiment).output.txt
-    except AttributeError:
-        # Handle case where checkpoints object is present but .convert_contrasts doesn't exist (shouldn't happen if checkpoint defined)
-        print(f"Error: Checkpoint 'convert_contrasts' not found in checkpoints object for {experiment}.")
-        ContrastCache[cache_key] = ["error_checkpoint_attribute"]
-        return ["error_checkpoint_attribute"]
-    except Exception as e:
-        # Handle cases where the checkpoint might not have been run or failed
-        print(f"Error accessing checkpoint output for {experiment}: {e}")
-        ContrastCache[cache_key] = ["error_accessing_checkpoint"]
-        return ["error_accessing_checkpoint"]
+    # REMOVED Checkpoint access logic
+    # try:
+    #     # Use the checkpoints object ONLY if it's provided
+    #     if checkpoints is None:
+    #         # ... error handling ...
+    #     converted_contrast_path = checkpoints.convert_contrasts.get(experiment=experiment).output.txt
+    # except AttributeError:
+    #     # ... error handling ...
+    # except Exception as e:
+    #     # ... error handling ...
     # --- End Checkpoint Access ---
+    converted_contrast_path = contrast_txt_path # Use the path passed as argument
 
     validation_info = get_validation_info(experiment)
     if validation_info["status"] == "failed":
+        # Still useful to prevent parsing if validation failed upstream
         ContrastCache[cache_key] = ["validation_failed"]
         return ["validation_failed"]
 
-    # File existence check might still be useful, but rely on checkpoint dependency primarily
-    # if not Path(converted_contrast_path).exists():
-    #     print(f"Warning: Converted contrasts file not found via checkpoint: {converted_contrast_path}")
-    #     ContrastCache[cache_key] = ["conversion_failed"]
-    #     return ["conversion_failed"]
+    # File existence check (the rule requesting this function's output 
+    # should depend on contrasts.txt, making this check potentially redundant,
+    # but good for robustness)
+    if not Path(converted_contrast_path).exists():
+        print(f"Warning: Provided contrasts file not found: {converted_contrast_path}")
+        ContrastCache[cache_key] = ["contrast_file_missing"]
+        return ["contrast_file_missing"]
 
     try:
-        # Ensure the path from the checkpoint output is used
+        # Ensure the path passed as argument is used
         contrasts = parse_contrasts(str(converted_contrast_path))
         ContrastCache[cache_key] = contrasts  # Cache the list of dicts
         names = [c["name"] for c in contrasts] if contrasts else []
         if not names:
-            print(f"Warning: No valid contrasts parsed for {experiment}.")
+            print(f"Warning: No valid contrasts parsed for {experiment} from {converted_contrast_path}.")
             return []  # Return empty list
         return names
     except Exception as e:
-        print(f"Error parsing contrasts for {experiment}: {e}")
+        print(f"Error parsing contrasts file {converted_contrast_path} for {experiment}: {e}")
         ContrastCache[cache_key] = ["error_parsing_contrasts"]
         return ["error_parsing_contrasts"]
 
@@ -1541,7 +1537,7 @@ rule generate_qc_report:
 # --- Rule All: Define Final Output Files ---
 
 
-def get_final_outputs(wildcards, checkpoints=None):
+def get_final_outputs(wildcards):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
     print("--- Entering get_final_outputs ---") # DEBUG
@@ -1568,10 +1564,11 @@ def get_final_outputs(wildcards, checkpoints=None):
         final_files.append(contrast_txt_path)
         # --------------------------------------------------------------------------
 
-        # Use the modified get_contrast_names function with checkpoints object
-        # Pass SimpleNamespace for wildcards as before if needed, or adjust based on how rule all calls this
-        print(f"Calling get_contrast_names for {experiment} with checkpoints={checkpoints is not None}...") # DEBUG
-        contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints)
+        # Use the modified get_contrast_names function 
+        # Pass the determined path instead of checkpoints object
+        print(f"Calling get_contrast_names for {experiment} with path={contrast_txt_path}...") # DEBUG
+        # contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), checkpoints) # Pass checkpoints along
+        contrasts = get_contrast_names(SimpleNamespace(experiment=experiment), contrast_txt_path=str(contrast_txt_path))
         print(f"Contrasts for {experiment}: {contrasts}") # DEBUG
 
         if (
@@ -1692,13 +1689,14 @@ def get_final_outputs(wildcards, checkpoints=None):
 
 rule all:
     input:
-        # Explicitly list outputs that depend on the checkpoint
+        # Explicitly list outputs that depend on the converted contrasts rule
         contrast_files=expand(
             OUTPUT_DIR / "{experiment}" / "contrasts.txt",
             experiment=TARGET_EXPERIMENTS # Use the globally determined list
         ),
-        # Use lambda for the rest of the outputs
-        other_files=lambda wildcards, checkpoints: get_final_outputs(wildcards, checkpoints),
+        # Use lambda for the rest of the outputs, remove checkpoints argument
+        # other_files=lambda wildcards, checkpoints: get_final_outputs(wildcards, checkpoints),
+        other_files=lambda wildcards: get_final_outputs(wildcards),
     output:
         # Single flag file indicating completion of requested targets
         OUTPUT_DIR / "pipeline_complete.flag",
