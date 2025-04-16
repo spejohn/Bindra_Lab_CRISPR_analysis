@@ -25,7 +25,7 @@ DESIGN_MATRIX_PATTERN = "*.txt"
 
 
 @retry_operation(max_attempts=3, delay=2)
-def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = None) -> str:
+def convert_file_to_tab_delimited(file_path: str, output_path: str) -> str:
     """
     Convert a CSV file to tab-delimited format for use with MAGeCK and DrugZ.
     Uses retry_operation decorator to handle temporary file access issues.
@@ -36,31 +36,24 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
     - Validating required columns for contrast tables
     
     Args:
-        file_path: Path to the CSV file
-        output_dir: Optional output directory (defaults to same as file_path)
+        file_path: Path to the input CSV file.
+        output_path: Full path for the desired output tab-delimited file.
         
     Returns:
-        Path to the converted tab-delimited file
+        Path to the converted tab-delimited file.
     """
     try:
-        logging.info(f"Converting {file_path} to tab-delimited format")
+        logging.info(f"Converting {file_path} to tab-delimited format -> {output_path}")
         
-        # Determine the output path
-        input_path = Path(file_path)
-        if output_dir:
-            output_dir_path = Path(output_dir)
-            output_dir_path.mkdir(exist_ok=True, parents=True)
-        else:
-            output_dir_path = input_path.parent
+        # Determine the output path and ensure directory exists
+        output_path_obj = Path(output_path)
+        output_dir_path = output_path_obj.parent
+        output_dir_path.mkdir(exist_ok=True, parents=True)
             
-        # Create the output filename (change extension to .txt)
-        output_filename = f"{input_path.stem}.txt"
-        output_path = output_dir_path / output_filename
-        
         # First check if this is a contrast table with duplicate column names
         # Use a more flexible CSV reader for initial inspection
         try:
-            with open(file_path, 'r', encoding='utf-8-sig') as f:
+            with open(file_path, 'r', encoding='utf-8-sig') as f: # Read with utf-8-sig to handle BOM
                 header = f.readline().strip()
             
             # Check for duplicate column names in header
@@ -74,7 +67,7 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
             logging.info(f"Detected contrast table with duplicate columns")
             
             # Process file with duplicate columns using a custom approach
-            with open(file_path, 'r', encoding='utf-8-sig') as f:
+            with open(file_path, 'r', encoding='utf-8-sig') as f: # Read with utf-8-sig to handle BOM
                 lines = f.readlines()
             
             # Clean header elements thoroughly after splitting
@@ -97,8 +90,8 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
             new_data = {}
             # Create a temporary DataFrame from data_rows to handle varying row lengths safely
             # Ensure columns match the *original* header length for correct indexing
-            df_raw = pd.DataFrame(data_rows, columns=header if len(header) == len(data_rows[0]) else None)
-            if df_raw.columns is None and len(header) > 0:
+            df_raw = pd.DataFrame(data_rows, columns=header if len(data_rows) > 0 and len(header) == len(data_rows[0]) else None)
+            if df_raw.columns is None and len(header) > 0 and len(data_rows) > 0:
                  # If columns couldn't be assigned automatically (ragged array), handle carefully
                  logging.warning("CSV rows have inconsistent lengths. Handling consolidation carefully.")
                  # Reconstruct df_raw column by column to avoid index errors
@@ -108,6 +101,10 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
                          temp_data_for_df[i].append(row[i] if i < len(row) else None)
                  df_raw = pd.DataFrame(temp_data_for_df)
                  df_raw.columns = header # Assign original header names
+            elif len(data_rows) == 0:
+                # Handle empty data case
+                logging.warning("CSV file has header but no data rows.")
+                df_raw = pd.DataFrame(columns=header)
             
             for col in unique_columns:
                 positions = column_positions[col]
@@ -138,7 +135,8 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
             # Create the consolidated dataframe
             df = pd.DataFrame(new_data)
             # Ensure columns are in the order of unique_columns 
-            df = df[unique_columns] 
+            if unique_columns: # Check if unique_columns is not empty
+                df = df[unique_columns]
             
             # Check if all required columns for contrast tables are present *after* consolidation
             # Use the CONTRAST_REQUIRED_COLUMNS list directly
@@ -161,10 +159,10 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
                 logging.warning(f"Standard CSV reading failed, trying with error_bad_lines=False: {str(e)}")
                 try:
                     # Try with on_bad_lines='skip' for newer pandas
-                    df = pd.read_csv(file_path, on_bad_lines='skip')
+                    df = pd.read_csv(file_path, on_bad_lines='skip', encoding='utf-8-sig')
                 except TypeError:
                     # Fall back to error_bad_lines for older pandas versions
-                    df = pd.read_csv(file_path, error_bad_lines=False)
+                    df = pd.read_csv(file_path, error_bad_lines=False, encoding='utf-8-sig')
                 
             logging.info(f"Loaded {len(df)} rows from {file_path}")
             
@@ -174,31 +172,47 @@ def convert_file_to_tab_delimited(file_path: str, output_dir: Optional[str] = No
                     df[column] = df[column].apply(lambda x: x.strip() if isinstance(x, str) else x)
             
             # For contrast tables, clean the comma-separated lists of samples
-            is_contrast_table = all(col in df.columns for col in CONTRAST_REQUIRED_COLUMNS)
-            if is_contrast_table:
-                logging.info(f"File appears to be a contrast table with columns: {', '.join(df.columns)}")
+            # Check required cols case-insensitively first for robustness before cleaning
+            df_cols_lower = {c.lower().strip() for c in df.columns}
+            contrast_required_lower = {c.lower() for c in CONTRAST_REQUIRED_COLUMNS}
+            is_contrast_table_likely = contrast_required_lower.issubset(df_cols_lower)
+
+            if is_contrast_table_likely:
+                logging.info(f"File appears to be a contrast table with columns: {df.columns.tolist()}")
                 
-                # Clean whitespace from comma-separated values in control and treatment columns
-                for col in ['control', 'treatment']:
-                    if col in df.columns:
-                        df[col] = df[col].apply(lambda x: ','.join([s.strip() for s in str(x).split(',')]) if pd.notna(x) else x)
+                # Find the actual column names matching 'control' and 'treatment' case-insensitively
+                control_col = next((c for c in df.columns if c.lower().strip() == 'control'), None)
+                treatment_col = next((c for c in df.columns if c.lower().strip() == 'treatment'), None)
+                contrast_col = next((c for c in df.columns if c.lower().strip() == 'contrast'), None)
+
+                # Clean whitespace from comma-separated values in identified control and treatment columns
+                if control_col:
+                    df[control_col] = df[control_col].apply(lambda x: ','.join([s.strip() for s in str(x).split(',')]) if pd.notna(x) else x)
+                if treatment_col:
+                    df[treatment_col] = df[treatment_col].apply(lambda x: ','.join([s.strip() for s in str(x).split(',')]) if pd.notna(x) else x)
                 
-                # Check for required columns
-                missing_columns = [col for col in CONTRAST_REQUIRED_COLUMNS if col not in df.columns]
+                # Check for required columns (using the identified names)
+                # Re-check using the exact required names defined in config for final validation
+                missing_columns = []
+                if not contrast_col: missing_columns.append('contrast')
+                if not control_col: missing_columns.append('control')
+                if not treatment_col: missing_columns.append('treatment')
+                
                 if missing_columns:
                     raise ValueError(
                         f"Contrast table missing required columns: {', '.join(missing_columns)}. "
-                        f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}"
+                        f"Required columns are: {', '.join(CONTRAST_REQUIRED_COLUMNS)}. "
+                        f"Found columns: {df.columns.tolist()}"
                     )
             else:
-                # Assume it's a design matrix
-                logging.info(f"File appears to be a design matrix with columns: {', '.join(df.columns)}")
+                # Assume it's a design matrix or other file type
+                logging.info(f"File does not appear to be a standard contrast table (based on columns). Treating as design matrix or other. Columns: {df.columns.tolist()}")
         
-        # Save as tab-delimited
-        df.to_csv(output_path, sep='\t', index=False)
-        logging.info(f"Successfully saved tab-delimited file to {output_path}")
+        # Save as tab-delimited using the specified output_path
+        df.to_csv(output_path_obj, sep='\t', index=False)
+        logging.info(f"Successfully saved tab-delimited file to {output_path_obj}")
         
-        return str(output_path)
+        return str(output_path_obj)
         
     except Exception as e:
         logging.error(f"Error converting {file_path} to tab-delimited format: {str(e)}")

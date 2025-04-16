@@ -19,6 +19,7 @@ import shutil  # Added for shutil.copy
 from types import SimpleNamespace  # Needed for mocking wildcards
 import shlex  # Added for shlex.quote
 from datetime import datetime # Import datetime
+import logging  # Added for logging
 
 # --- Core Function Imports ---
 # Assuming core modules are importable relative to Snakefile location or via PYTHONPATH
@@ -175,6 +176,38 @@ def get_validation_info(experiment):
     return ValidationCache[experiment]
 
 
+# --- Helper function to dynamically determine the converted contrast/design matrix path ---
+def get_converted_metadata_path(wildcards, metadata_type):
+    """Gets the expected output path for converted contrast or design matrix files."""
+    experiment = wildcards.experiment
+    validation_info = get_validation_info(experiment)
+    
+    input_key = None
+    output_generic_name = None # Fallback name if input path isn't found
+    if metadata_type == "contrast":
+        input_key = "contrasts_path"
+        output_generic_name = "contrasts.txt"
+    elif metadata_type == "design_matrix":
+        input_key = "design_matrix_path"
+        output_generic_name = "design_matrix.txt"
+    else:
+        raise ValueError(f"Unknown metadata_type: {metadata_type}")
+
+    input_path_str = validation_info.get(input_key)
+    
+    if not input_path_str:
+        # Input path not found (e.g., optional design matrix). 
+        # Return the generic path. Rules using this should handle missing optional inputs gracefully.
+        logging.warning(f"Input path for {metadata_type} not found for {experiment}. Using generic path for DAG construction.")
+        return OUTPUT_DIR / experiment / output_generic_name
+
+    # Input path found, construct output path based on input stem.
+    input_path = Path(input_path_str)
+    output_filename = f"{input_path.stem}.txt" # Always use input stem + .txt 
+        
+    return OUTPUT_DIR / experiment / output_filename
+
+
 # --- Helper to get FASTQ basenames for an experiment ---
 def get_fastq_basenames(experiment):
     """Finds sample basenames from _R1_ FASTQ files in the experiment's fastq dir."""
@@ -210,16 +243,15 @@ def get_fastq_basenames(experiment):
 
 
 # --- Rule to Convert Contrast CSV to TXT ---
-# This rule acts as an implicit validation trigger
 checkpoint convert_contrasts:
     input:
         # Use the path identified by the validation function
         csv=lambda wc: get_validation_info(wc.experiment).get("contrasts_path"),
     output:
-        # Place converted file directly in experiment output dir
-        txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        # Define output dynamically based on input file stem
+        txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
     log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts.log",
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts_{Path(get_validation_info(wildcards.experiment).get('contrasts_path', '')).stem}.log", # Dynamic log name
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
@@ -237,15 +269,17 @@ checkpoint convert_contrasts:
             try:
                 input_csv_path = validation_info["contrasts_path"]
                 if Path(input_csv_path).suffix.lower() == ".csv":
-                    # Pass the output directory, not the full output path
+                    # Pass the FULL output path (dynamically determined by output directive)
                     convert_file_to_tab_delimited(
                         file_path=input_csv_path,
-                        output_dir=str(output_dir_path), # Pass directory
+                        output_path=str(output.txt), # Pass full path
                     )
                 else:
                     print(
-                        f"[{datetime.now()}] {wildcards.experiment}: Input contrast file {input_csv_path} is already .txt, copying."
+                        f"[{datetime.now()}] {wildcards.experiment}: Input contrast file {input_csv_path} is already .txt, copying to {output.txt}."
                     )
+                    # Ensure target dir exists before copy
+                    Path(output.txt).parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy(input_csv_path, output.txt)
             except Exception as e:
                 print(f"[{datetime.now()}] ERROR converting contrasts for {wildcards.experiment}: {e}")
@@ -260,10 +294,11 @@ rule convert_design_matrix:
         # Use the path identified by the validation function
         csv=lambda wc: get_validation_info(wc.experiment).get("design_matrix_path")
     output:
-        # Place converted file directly in experiment output dir
-        txt=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
+        # Define output dynamically based on input file stem (if input exists and is csv)
+        txt=lambda wc: get_converted_metadata_path(wc, "design_matrix"),
     log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "convert_design_matrix.log",
+        # Dynamic log name - handle case where design matrix doesn't exist
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_design_matrix_{Path(get_validation_info(wildcards.experiment).get('design_matrix_path', 'NO_INPUT')).stem}.log", 
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
@@ -280,10 +315,10 @@ rule convert_design_matrix:
             if Path(input_path).suffix.lower() == ".csv":
                 print(f"[{datetime.now()}] {wildcards.experiment}: Converting design matrix...")
                 try:
-                    # Pass the output directory, not the full output path
+                    # Pass the FULL output path (dynamically determined)
                     convert_file_to_tab_delimited(
                         file_path=input_path,
-                        output_dir=str(output_dir_path), # Pass directory
+                        output_path=str(output.txt), # Pass full path
                     )
                 except Exception as e:
                     print(
@@ -294,8 +329,10 @@ rule convert_design_matrix:
                     raise e # Re-raise exception to fail the job
             else:
                 print(
-                    f"[{datetime.now()}] {wildcards.experiment}: Input design matrix file {input_path} is already .txt, copying."
+                    f"[{datetime.now()}] {wildcards.experiment}: Input design matrix file {input_path} is already .txt, copying to {output.txt}."
                 )
+                # Ensure target dir exists before copy
+                Path(output.txt).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(input_path, output.txt)
         else:
             print(
@@ -690,8 +727,8 @@ def format_options(options_dict):
 rule run_mageck_rra_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Explicitly depend on the converted contrast file
-        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        # Depend on the *dynamically named* converted contrast file
+        contrasts_txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
         sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         gene_summary=OUTPUT_DIR
@@ -730,12 +767,13 @@ rule run_mageck_rra_per_contrast:
         from pathlib import Path
 
 
-        # Parse contrasts inside the run block
+        # Parse contrasts inside the run block from input.contrasts_txt
         treatment_samples = ""
         control_samples = ""
         try:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
-            df = pd.read_csv(input.contrasts_txt, sep='\\t') # Needs double escape for regex/string
+            # Input contrast file name is now dynamic via the lambda function
+            df = pd.read_csv(input.contrasts_txt, sep='\t') # Needs double escape for regex/string
             contrast_row = df[df['name'] == wildcards.contrast]
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
@@ -769,7 +807,8 @@ rule run_mageck_rra_per_contrast:
 rule run_mageck_mle_per_experiment:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        design_matrix=OUTPUT_DIR / "{experiment}" / "design_matrix.txt",
+        # Design matrix input also needs to be dynamic
+        design_matrix=lambda wc: get_converted_metadata_path(wc, "design_matrix"),
         sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         # Experiment-level outputs in analysis_results
@@ -807,8 +846,8 @@ rule run_mageck_mle_per_experiment:
 rule run_drugz_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Explicitly depend on the converted contrast file
-        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
+        # Depend on the *dynamically named* converted contrast file
+        contrasts_txt=lambda wc: get_converted_metadata_path(wc, "contrast"),
         sif=DRUGZ_SIF, # Depend on the specific SIF file
     output:
         drugz_results=OUTPUT_DIR
@@ -837,12 +876,13 @@ rule run_drugz_per_contrast:
         from pathlib import Path
 
 
-        # Parse contrasts inside the run block
+        # Parse contrasts inside the run block from input.contrasts_txt
         treatment_samples = ""
         control_samples = ""
         try:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
-            df = pd.read_csv(input.contrasts_txt, sep='\\t') # Needs double escape for regex/string
+            # Input contrast file name is now dynamic via the lambda function
+            df = pd.read_csv(input.contrasts_txt, sep='\t') # Needs double escape for regex/string
             contrast_row = df[df['name'] == wildcards.contrast]
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
