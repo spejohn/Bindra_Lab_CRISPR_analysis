@@ -565,25 +565,21 @@ rule run_mageck_count_per_sample:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
     shell:
-        # Construct the apptainer command directly
-        # Ensure output directory exists on host first
-        r"""
-        mkdir -p {params.output_dir_host}
-        apptainer exec \
-            --bind {params.fastq_dir_host}:/data/fastq \
-            --bind {params.library_dir_host}:/data/library \
-            --bind {params.output_dir_host}:/data/output \
-            --pwd /data/output \
-            {input.sif} \
-            mageck count \
-                --fastq {params.r1_container_path} \
-                $(test -n "{params.r2_container_path}" && echo "--fastq-2 {params.r2_container_path}") \
-                --list-seq {params.library_container_path} \
-                --sample-label {wildcards.sample} \
-                --output-prefix {params.output_prefix_container} \
-                {params.count_options_str} \
-                > {log} 2>&1
-        """
+        # Ensure output directory exists first (Snakemake usually handles this, but belt-and-suspenders)
+        # The actual command runs inside the container invoked by Snakemake
+        r\"\"\"
+        mkdir -p $(dirname {output.count_txt}); 
+        mageck count \\
+            --fastq {input.r1} \\
+            $(test -n \"{input.r2}\" && echo "--fastq-2 {input.r2}") \\
+            --list-seq {input.library} \\
+            --sample-label {wildcards.sample} \\
+            --output-prefix {wildcards.sample} \\
+            {params.count_options_str} \\
+            > {log} 2>&1 && \\
+        mv {wildcards.sample}.count.txt {output.count_txt} && \\
+        mv {wildcards.sample}.countsummary.txt {output.summary}
+        \"\"\"
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
