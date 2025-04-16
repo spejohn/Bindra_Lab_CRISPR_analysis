@@ -85,6 +85,10 @@ def parse_args():
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
     
+    # Add argument to capture target files/rules
+    parser.add_argument('targets', nargs='*', default=[], # Capture zero or more positional args
+                        help='Optional target rule names or file paths for Snakemake')
+    
     # parser.add_argument("--snakemake-args", help="Additional arguments to pass to Snakemake", default="") # Removed - prefer explicit args
     
     return parser.parse_args()
@@ -155,6 +159,11 @@ def run_snakemake(args):
     if args.dryrun:
         cmd_parts.append("--dryrun")
         
+    # Add positional targets if provided
+    if args.targets:
+        cmd_parts.extend(args.targets)
+        logging.info(f"Adding specific targets: {args.targets}")
+
     # Join the command parts into a string
     # cmd = " ".join(shlex.quote(part) for part in cmd_parts) # Use shlex.quote for safety 
     # Use cmd_parts directly with Popen
