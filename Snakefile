@@ -538,6 +538,7 @@ rule run_fastqc_per_sample:
         # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
         #       and runs the shell command in the mounted output directory.
         r"""
+        mkdir -p $(dirname {log}) && \
         fastqc \
             --threads {threads} \
             -o . \
@@ -583,6 +584,7 @@ rule run_mageck_count_per_sample:
         #       in the mounted host output directory (params.output_dir_host).
         #       The --output-prefix uses a relative path within that directory.
         r"""
+        mkdir -p $(dirname {log}) && \
         mageck count \
             --fastq {input.r1} \
             $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
@@ -828,6 +830,7 @@ rule run_mageck_rra_per_contrast:
         # Construct the command string using a relative output prefix
         # Snakemake will execute this in the mounted output directory
         command = f"""
+        mkdir -p $(dirname {log}) && \
         mageck test \\
             -k {input.count_file} \\
             -t {shlex.quote(treatment_samples)} \\
@@ -869,6 +872,7 @@ rule run_mageck_mle_per_experiment:
         # Snakemake ensures the output directory exists and mounts it.
         # Run mageck mle using a relative output prefix.
         r"""
+        mkdir -p $(dirname {log}) && \
         mageck mle \\
             -k {input.count_file} \\
             -d {input.design_matrix} \\
@@ -937,6 +941,7 @@ rule run_drugz_per_contrast:
         # Snakemake will execute this in the mounted output directory
         output_filename = f"{wildcards.contrast}_DrugZ.txt"
         command = f"""
+        mkdir -p $(dirname {log}) && \
         python /drugz/drugz.py \\
             --input {input.count_file} \\
             --output "{output_filename}" \\
