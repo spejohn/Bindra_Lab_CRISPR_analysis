@@ -254,8 +254,8 @@ checkpoint convert_contrasts:
         # Calculate the dynamic part of the log name here
         log_stem=lambda wc: Path(get_validation_info(wc.experiment).get('contrasts_path', '')).stem
     log:
-        # Reference the param in a simple string format
-        OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts_{params.log_stem}.log",
+        # TEMPORARY: Use a static log path for troubleshooting
+        OUTPUT_DIR / "{experiment}" / "logs" / "convert_contrasts.log",
     run:
         validation_info = get_validation_info(wildcards.experiment)
         if validation_info["status"] == "failed":
