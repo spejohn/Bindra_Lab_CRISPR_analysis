@@ -697,7 +697,8 @@ def format_options(options_dict):
 rule run_mageck_rra_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Depends implicitly on contrasts_txt via ContrastCache population
+        # Explicitly depend on the converted contrast file
+        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
         sif=MAGECK_SIF, # Depend on the specific SIF file
     output:
         gene_summary=OUTPUT_DIR
@@ -711,37 +712,54 @@ rule run_mageck_rra_per_contrast:
         / "analysis_results"
         / "{contrast}_RRA.sgrna_summary.txt",
     params:
+        # Output prefix remains the same
         output_prefix=lambda wc, output: str(
             Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
         ),
-        # use_apptainer=config["use_apptainer"], # REMOVED
-        # Get comma-separated sample lists using helper
-        treatment_samples=lambda wc: get_contrast_samples(wc, 'treatment'),
-        control_samples=lambda wc: get_contrast_samples(wc, 'control'),
-        # Format analysis options from config
+        # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(
-            # Combine default norm method with any other RRA options
             {**{"norm-method": config.get("mageck_norm_method", "median")},
-             **config.get("mageck_rra_options", {})} # Define mageck_rra_options in config if needed
+             **config.get("mageck_rra_options", {})}
         )
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
     container:
         input.sif # Use the SIF file from input
-    shell:
-        # Ensure output directory exists first
-        r"""
+    run:
+        # Parse contrasts inside the run block
+        treatment_samples = ""
+        control_samples = ""
+        try:
+            # Simple parsing assuming tab-delimited with header: name, treatment, control
+            df = pd.read_csv(input.contrasts_txt, sep='\\t')
+            contrast_row = df[df['name'] == wildcards.contrast]
+            if not contrast_row.empty:
+                # Assuming treatment and control columns contain comma-separated strings already
+                treatment_samples = contrast_row.iloc[0]['treatment']
+                control_samples = contrast_row.iloc[0]['control']
+            else:
+                raise ValueError(f"Contrast '{wildcards.contrast}' not found in {input.contrasts_txt}")
+        except Exception as e:
+             # Log error and raise
+            error_msg = f"Error parsing contrasts file {input.contrasts_txt} for contrast {wildcards.contrast}: {e}"
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise RuntimeError(error_msg) from e # Raise exception to stop the rule
+
+        # Construct the command string
+        command = f"""
         mkdir -p $(dirname {output.gene_summary});
-        # Run mageck test
-        mageck test \
-            -k {input.count_file} \
-            -t {params.treatment_samples} \
-            -c {params.control_samples} \
-            -n {params.output_prefix} \
-            {params.analysis_options_str} \
+        mageck test \\
+            -k {input.count_file} \\
+            -t {shlex.quote(treatment_samples)} \\
+            -c {shlex.quote(control_samples)} \\
+            -n {params.output_prefix} \\
+            {params.analysis_options_str} \\
             > {log} 2>&1
         """
+        # Execute the command
+        shell(command)
 
 
 # --- Rule to run MAGeCK MLE per experiment (Conditional) ---
@@ -785,7 +803,8 @@ rule run_mageck_mle_per_experiment:
 rule run_drugz_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Implicit dependency on contrasts.txt via ContrastCache
+        # Explicitly depend on the converted contrast file
+        contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
         sif=DRUGZ_SIF, # Depend on the specific SIF file
     output:
         drugz_results=OUTPUT_DIR
@@ -795,31 +814,48 @@ rule run_drugz_per_contrast:
         / "{contrast}_DrugZ.txt",
     params:
         # Define output path based on expected output file name
-        # DrugZ script takes explicit output file path, not prefix
         output_path=lambda wc, output: output.drugz_results,
-        # Get comma-separated sample lists using helper
-        treatment_samples=lambda wc: get_contrast_samples(wc, 'treatment'),
-        control_samples=lambda wc: get_contrast_samples(wc, 'control'),
-        # Format analysis options from config
+        # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(config.get("drugz_options", {})),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "drugz_{contrast}.log",
     threads: 1
     container:
         input.sif # Use the SIF file from input
-    shell:
-        # Ensure output directory exists first
-        r"""
+    run:
+        # Parse contrasts inside the run block
+        treatment_samples = ""
+        control_samples = ""
+        try:
+            # Simple parsing assuming tab-delimited with header: name, treatment, control
+            df = pd.read_csv(input.contrasts_txt, sep='\\t')
+            contrast_row = df[df['name'] == wildcards.contrast]
+            if not contrast_row.empty:
+                # Assuming treatment and control columns contain comma-separated strings already
+                treatment_samples = contrast_row.iloc[0]['treatment']
+                control_samples = contrast_row.iloc[0]['control']
+            else:
+                raise ValueError(f"Contrast '{wildcards.contrast}' not found in {input.contrasts_txt}")
+        except Exception as e:
+             # Log error and raise
+            error_msg = f"Error parsing contrasts file {input.contrasts_txt} for contrast {wildcards.contrast}: {e}"
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise RuntimeError(error_msg) from e # Raise exception to stop the rule
+
+        # Construct the command string
+        command = f"""
         mkdir -p $(dirname {output.drugz_results});
-        # Assume drugz.py is at /drugz/drugz.py in the container
-        python /drugz/drugz.py \
-            --input {input.count_file} \
-            --output "{params.output_path}" \
-            --control-id {params.control_samples} \
-            --treatment-id {params.treatment_samples} \
-            {params.analysis_options_str} \
+        python /drugz/drugz.py \\
+            --input {input.count_file} \\
+            --output "{params.output_path}" \\
+            --control-id {shlex.quote(control_samples)} \\
+            --treatment-id {shlex.quote(treatment_samples)} \\
+            {params.analysis_options_str} \\
             > {log} 2>&1
         """
+        # Execute the command
+        shell(command)
 
 
 # --- Rule to Convert MAGeCK RRA Results to CSV ---
