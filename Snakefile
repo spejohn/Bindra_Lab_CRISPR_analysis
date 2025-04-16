@@ -27,7 +27,7 @@ import logging  # Added for logging
 try:
     # Use absolute import path assuming Snakefile is at root
     from core.validation import validate_experiment_structure
-    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts, make_count_table, convert_results_to_csv
+    from core.file_handling import convert_file_to_tab_delimited, parse_contrasts, make_count_table, convert_results_to_csv, aggregate_mageck_summaries
     from core.analysis_steps import (
         run_fastqc,
         run_mageck_count,
@@ -523,26 +523,24 @@ rule run_fastqc_per_sample:
         # Define both outputs as FastQC generates them
         html=OUTPUT_DIR / "{experiment}" / "qc" / "{sample}_fastqc.html",
         zip=OUTPUT_DIR / "{experiment}" / "qc" / "{sample}_fastqc.zip",
-    params:
-        output_dir=lambda wc, output: str(Path(output.html).parent),
-        # use_apptainer=config["use_apptainer"], # REMOVED - Controlled by --use-apptainer/--use-docker
-    log:
-        OUTPUT_DIR / "{experiment}" / "logs" / "fastqc_{sample}.log",
     threads: 4
     resources:
         mem_mb=24000,
         time_min=120
+    params: # Add params directive back, even if empty
+        # No specific parameters needed for the shell command anymore
+    log:
+        OUTPUT_DIR / "{experiment}" / "logs" / "fastqc_{sample}.log",
     container:
         # Directly reference the SIF path variable, converted to string
         str(FASTQC_SIF)
     shell:
-        # Create output directory first
+        # Snakemake ensures the output directory exists on the host and mounts it.
+        # Run fastqc, outputting to the current directory (.) inside the container.
         r"""
-        mkdir -p {params.output_dir};
-        # Run fastqc
         fastqc \
             --threads {threads} \
-            -o {params.output_dir} \
+            -o . \
             {input.fastq} \
             > {log} 2>&1
         """
@@ -556,17 +554,23 @@ rule run_mageck_count_per_sample:
         library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
         sif=MAGECK_SIF, # Keep SIF as input for dependency
     output:
-        count_txt=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
-        summary=temp(OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.countsummary.txt"),
+        # Output files go into a dedicated subdirectory
+        count_txt=OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt",
+        # Make summary persistent for aggregation
+        summary=OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.countsummary.txt",
     params:
         # Define paths relative to container mounts
+        # These help define the mount points for Snakemake
         r1_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r1)).name}",
         r2_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r2)).name}" if input.r2 else "",
         library_container_path=lambda wc, input: f"/data/library/{Path(str(input.library)).name}",
+        # Define the prefix path *inside* the container's output mount
+        # Snakemake maps the host output dir (mageck_count_outputs) to /data/output
         output_prefix_container="/data/output/{sample}",
         # Define host paths for binding
         fastq_dir_host=lambda wc, input: str(Path(str(input.r1)).parent),
         library_dir_host=lambda wc, input: str(Path(str(input.library)).parent),
+        # Host output directory is now the new subdirectory
         output_dir_host=lambda wc, output: str(Path(str(output.count_txt)).parent),
         # Mageck options from config
         count_options_str=lambda wc: format_options(config.get("mageck_count_options", {})),
@@ -580,33 +584,103 @@ rule run_mageck_count_per_sample:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
     shell:
-        # Ensure output directory exists first (Snakemake usually handles this, but belt-and-suspenders)
-        # The actual command runs inside the container invoked by Snakemake
+        # Ensure the target output directory exists *inside* the container
+        # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
         r"""
-        mkdir -p $(dirname {output.count_txt}); 
-        mageck count \
-            --fastq {input.r1} \
-            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
-            --list-seq {input.library} \
-            --sample-label {wildcards.sample} \
-            --output-prefix {wildcards.sample} \
-            {params.count_options_str} \
-            > {log} 2>&1 && \
-        mv {wildcards.sample}.count.txt {output.count_txt} && \
-        mv {wildcards.sample}.countsummary.txt {output.summary}
+        mkdir -p $(dirname {params.output_prefix_container});
+        mageck count \\
+            --fastq {input.r1} \\
+            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \\
+            --list-seq {input.library} \\
+            --sample-label {wildcards.sample} \\
+            --output-prefix {params.output_prefix_container} \\
+            {params.count_options_str} \\
+            > {log} 2>&1
+        # No mv commands needed now, files are created in the mounted output directory
         """
+
+
+# --- Rule to Aggregate MAGeCK Count Summaries (within mageck_count_outputs/) ---
+rule aggregate_count_summaries:
+    input:
+        # Input depends on the persistent summary files from run_mageck_count_per_sample
+        summaries=lambda wc: expand(
+            OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.countsummary.txt",
+            experiment=wc.experiment,
+            sample=get_fastq_basenames(wc.experiment),
+        ),
+    output:
+        # Aggregated output stays within the mageck_count_outputs directory
+        agg_summary=OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{experiment}_aggregated.countsummary.txt",
+    log:
+        OUTPUT_DIR / "{experiment}" / "logs" / "aggregate_count_summaries.log",
+    run:
+        validation_info = get_validation_info(wildcards.experiment)
+
+        # Only run if input type was FASTQ and validation passed
+        if (
+            validation_info["status"] == "valid"
+            and validation_info.get("data_type") == "fastq"
+        ):
+            summary_files = [str(f) for f in input.summaries]
+            if not summary_files:
+                print(
+                    f"[{datetime.now()}] {wildcards.experiment}: Warning: No sample count summary files found to aggregate in mageck_count_outputs/."                    
+                )
+                # Create an empty output file if needed by potential downstream rules
+                Path(output.agg_summary).parent.mkdir(parents=True, exist_ok=True)
+                Path(output.agg_summary).touch()
+            else:
+                print(
+                    f"[{datetime.now()}] {wildcards.experiment}: Aggregating {len(summary_files)} sample count summaries into {output.agg_summary}..."
+                )
+                try:
+                    # Ensure the core function exists and is imported
+                    from core.file_handling import aggregate_mageck_summaries
+
+                    Path(output.agg_summary).parent.mkdir(parents=True, exist_ok=True)
+                    # Call the core function
+                    success, msg = aggregate_mageck_summaries(
+                        summary_files=summary_files,
+                        output_path=str(output.agg_summary),
+                    )
+                    if not success:
+                        raise RuntimeError(f"Count summary aggregation failed: {msg}")
+                    
+                    print(f"[{datetime.now()}] {wildcards.experiment}: Count summary aggregation complete: {output.agg_summary}")
+
+                except ImportError:
+                     error_msg = "ERROR: aggregate_mageck_summaries function not found/imported from core.file_handling."
+                     print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
+                     with open(str(log), "w") as f: f.write(error_msg)
+                     raise NotImplementedError(error_msg)
+                except Exception as e:
+                    print(
+                        f"[{datetime.now()}] ERROR during count summary aggregation for {wildcards.experiment}: {e}"
+                    )
+                    with open(str(log), "w") as f:
+                        f.write(f"Error: {e}")
+                    raise e
+        else:
+             print(
+                f"[{datetime.now()}] {wildcards.experiment}: Skipping count summary aggregation (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
+            )
+             # Create empty output file if skipped? Similar consideration as aggregate_counts.
+             Path(output.agg_summary).parent.mkdir(parents=True, exist_ok=True)
+             Path(output.agg_summary).touch()
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
 rule aggregate_counts:
     input:
-        # Input now depends on the output of the new count rule
+        # Input now depends on the output of the new count rule in the subdirectory
         sample_counts=lambda wc: expand(
-            OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
+            OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt", # Look in subdirectory
             experiment=wc.experiment,
             sample=get_fastq_basenames(wc.experiment),
         ),
     output:
+        # Aggregated output is still at the experiment level
         agg_count_txt=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "aggregate_counts.log",
@@ -625,11 +699,16 @@ rule aggregate_counts:
             sample_files = [str(f) for f in input.sample_counts]
             if not sample_files:
                 print(
-                    f"[{datetime.now()}] {wildcards.experiment}: Warning: No sample count files found to aggregate. Creating empty output."
+                    f"[{datetime.now()}] {wildcards.experiment}: Warning: No sample count files found to aggregate in mageck_count_outputs/. Creating empty output."
                 )
+                # Ensure output directory exists even if creating empty file
+                Path(output.agg_count_txt).parent.mkdir(parents=True, exist_ok=True)
+                # Create an empty file to satisfy downstream rules if needed
+                Path(output.agg_count_txt).touch()
+
             else:
                 print(
-                    f"[{datetime.now()}] {wildcards.experiment}: Aggregating {len(sample_files)} sample counts..."
+                    f"[{datetime.now()}] {wildcards.experiment}: Aggregating {len(sample_files)} sample counts from mageck_count_outputs/..."
                 )
                 try:
                     Path(output.agg_count_txt).parent.mkdir(parents=True, exist_ok=True)
@@ -643,24 +722,13 @@ rule aggregate_counts:
 
                     print(f"[{datetime.now()}] {wildcards.experiment}: Aggregation complete: {output.agg_count_txt}")
 
-                    # Delete intermediate counts directory on success
-                    intermediate_counts_dir = Path(sample_files[0]).parent
-                    if (
-                        intermediate_counts_dir.exists()
-                        and intermediate_counts_dir.name == "counts"
-                    ):
-                        print(
-                            f"[{datetime.now()}] {wildcards.experiment}: Removing intermediate counts directory: {intermediate_counts_dir}"
-                        )
-                        shutil.rmtree(intermediate_counts_dir)
-                    else:
-                        print(
-                            f"[{datetime.now()}] {wildcards.experiment}: Warning: Could not reliably determine intermediate counts directory for removal ({intermediate_counts_dir}). Skipping removal."
-                        )
+                    # --- REMOVED DIRECTORY DELETION ---
+                    # intermediate_counts_dir = Path(sample_files[0]).parent
+                    # ... removal logic removed ...
 
                 except Exception as e:
                     print(
-                        f"[{datetime.now()}] ERROR during count aggregation or cleanup for {wildcards.experiment}: {e}"
+                        f"[{datetime.now()}] ERROR during count aggregation for {wildcards.experiment}: {e}"
                     )
                     with open(str(log), "w") as f:
                         f.write(f"Error: {e}")
@@ -669,6 +737,8 @@ rule aggregate_counts:
             print(
                 f"[{datetime.now()}] {wildcards.experiment}: Skipping count aggregation (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
             )
+            # Create empty output file if skipped but needed downstream? Consider implications.
+            # For now, just log the skip. Downstream rules should handle missing input if appropriate.
 
 
 # --- Helper Functions for Contrast/Option Formatting ---
@@ -720,15 +790,10 @@ rule run_mageck_rra_per_contrast:
         / "analysis_results"
         / "{contrast}_RRA.sgrna_summary.txt",
     params:
-        # Output prefix remains the same
-        output_prefix=lambda wc, output: str(
-            Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
-        ),
         # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(
             {**{"norm-method": config.get("mageck_norm_method", "median")},
-             **config.get("mageck_rra_options", {})}
-        )
+             **config.get("mageck_rra_options", {})})
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
@@ -766,14 +831,14 @@ rule run_mageck_rra_per_contrast:
             with open(str(log), "w") as f: f.write(error_msg)
             raise RuntimeError(error_msg) from e # Raise exception to stop the rule
 
-        # Construct the command string
+        # Construct the command string using a relative output prefix
+        # Snakemake will execute this in the mounted output directory
         command = f"""
-        mkdir -p $(dirname {output.gene_summary});
         mageck test \\
             -k {input.count_file} \\
             -t {shlex.quote(treatment_samples)} \\
             -c {shlex.quote(control_samples)} \\
-            -n {params.output_prefix} \\
+            -n {wildcards.contrast}_RRA \\
             {params.analysis_options_str} \\
             > {log} 2>&1
         """
@@ -794,10 +859,10 @@ rule run_mageck_mle_per_experiment:
         sgrna_summary=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.sgrna_summary.txt",
         beta_coeff=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.beta_coefficients.txt",
     params:
-        # Output prefix reflects experiment-level analysis
-        output_prefix=lambda wc, output: str(
-            Path(output.gene_summary).parent / f"{wc.experiment}_MLE"
-        ),
+        # Output prefix is now relative to the container's working dir (output dir)
+        # output_prefix=lambda wc, output: str(
+        #     Path(output.gene_summary).parent / f"{wc.experiment}_MLE"
+        # ),
         # Format analysis options from config
         analysis_options_str=lambda wc: format_options(config.get("mageck_mle_options", {})),
     log:
@@ -807,15 +872,14 @@ rule run_mageck_mle_per_experiment:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
     shell:
-        # Ensure output directory exists first
+        # Snakemake ensures the output directory exists and mounts it.
+        # Run mageck mle using a relative output prefix.
         r"""
-        mkdir -p $(dirname {output.gene_summary});
-        # Run mageck mle
-        mageck mle \
-            -k {input.count_file} \
-            -d {input.design_matrix} \
-            -n {params.output_prefix} \
-            {params.analysis_options_str} \
+        mageck mle \\
+            -k {input.count_file} \\
+            -d {input.design_matrix} \\
+            -n {wildcards.experiment}_MLE \\
+            {params.analysis_options_str} \\
             > {log} 2>&1
         """
 
@@ -834,8 +898,8 @@ rule run_drugz_per_contrast:
         / "analysis_results"
         / "{contrast}_DrugZ.txt",
     params:
-        # Define output path based on expected output file name
-        output_path=lambda wc, output: output.drugz_results,
+        # Define output path relative to container working directory
+        # output_path=lambda wc, output: output.drugz_results,
         # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(config.get("drugz_options", {})),
     log:
@@ -875,12 +939,13 @@ rule run_drugz_per_contrast:
             with open(str(log), "w") as f: f.write(error_msg)
             raise RuntimeError(error_msg) from e # Raise exception to stop the rule
 
-        # Construct the command string
+        # Construct the command string using a relative output filename
+        # Snakemake will execute this in the mounted output directory
+        output_filename = f"{wildcards.contrast}_DrugZ.txt"
         command = f"""
-        mkdir -p $(dirname {output.drugz_results});
         python /drugz/drugz.py \\
             --input {input.count_file} \\
-            --output "{params.output_path}" \\
+            --output "{output_filename}" \\
             --control-id {shlex.quote(control_samples)} \\
             --treatment-id {shlex.quote(treatment_samples)} \\
             {params.analysis_options_str} \\

@@ -774,3 +774,93 @@ def parse_contrasts(contrasts_txt_path: str) -> List[Dict[str, Union[str, List[s
         logger.error(f"Error parsing contrasts file {contrasts_txt_path}: {e}")
         # Re-raise exception after logging
         raise ValueError(f"Error parsing contrasts file {contrasts_txt_path}: {e}") from e 
+
+
+# --- New Function to Aggregate MAGeCK Count Summaries ---
+@retry_operation(max_attempts=3, delay=2)
+def aggregate_mageck_summaries(summary_files: List[str], output_path: str) -> tuple[bool, str]:
+    """
+    Aggregates individual MAGeCK count summary files into a single file.
+    
+    Reads each summary file, adds a 'Sample' column based on the filename,
+    concatenates them, and writes the result to a tab-separated file.
+    Uses retry_operation for potential file access issues.
+
+    Args:
+        summary_files: List of paths to individual *.countsummary.txt files.
+        output_path: Path for the aggregated output file.
+
+    Returns:
+        Tuple (success: bool, message: str)
+    """
+    if not summary_files:
+        msg = "No summary files provided for aggregation."
+        logging.warning(msg)
+        # Create empty output file
+        try:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(output_path).touch()
+            return True, "Created empty aggregated summary file as no inputs were provided."
+        except Exception as e:
+             error_msg = f"Failed to create empty output file {output_path}: {e}"
+             logging.error(error_msg)
+             return False, error_msg
+
+    all_summaries = []
+    logging.info(f"Aggregating {len(summary_files)} count summary files into {output_path}")
+
+    try:
+        for file_path_str in summary_files:
+            file_path = Path(file_path_str)
+            if not file_path.exists() or file_path.stat().st_size == 0:
+                logging.warning(f"Skipping missing or empty summary file: {file_path}")
+                continue
+                
+            try:
+                # Extract sample name from filename (e.g., sampleA.countsummary.txt -> sampleA)
+                sample_name = file_path.stem.replace(".countsummary", "")
+                
+                # Read the summary file (tab-separated)
+                # Skip header row if present (MAGeCK summary doesn't have a conventional header)
+                # Let pandas infer columns or assign standard names if needed
+                df = pd.read_csv(file_path, sep="\t", header=None)
+                
+                # Add the Sample column
+                df["Sample"] = sample_name
+                
+                all_summaries.append(df)
+            except Exception as e:
+                logging.error(f"Error processing summary file {file_path}: {e}")
+                # Decide whether to skip or fail - for now, log and continue
+                # return False, f"Failed to process file {file_path}: {e}" 
+                
+        if not all_summaries:
+            msg = "No valid summary files could be processed."
+            logging.warning(msg)
+            # Create empty output file
+            try:
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).touch()
+                return True, "Created empty aggregated summary file as no valid inputs were processed."
+            except Exception as e:
+                 error_msg = f"Failed to create empty output file {output_path} after processing errors: {e}"
+                 logging.error(error_msg)
+                 return False, error_msg
+
+        # Concatenate all dataframes
+        aggregated_df = pd.concat(all_summaries, ignore_index=True)
+        
+        # Ensure output directory exists
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save the aggregated dataframe as tab-separated without index
+        aggregated_df.to_csv(output_path, sep="\t", index=False, header=False) # No header usually for MAGeCK summaries
+        
+        msg = f"Successfully aggregated {len(all_summaries)} summaries to {output_path}"
+        logging.info(msg)
+        return True, msg
+
+    except Exception as e:
+        error_msg = f"Error during summary aggregation: {e}"
+        logging.error(error_msg)
+        return False, error_msg 
