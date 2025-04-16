@@ -209,8 +209,8 @@ def get_fastq_basenames(experiment):
 # This rule acts as an implicit validation trigger
 checkpoint convert_contrasts:
     input:
-        # Define potential input CSV path
-        csv=lambda wc: str(BASE_DIR / wc.experiment / "contrasts.csv"),
+        # Use the path identified by the validation function
+        csv=lambda wc: get_validation_info(wc.experiment).get("contrasts_path"),
     output:
         # Place converted file directly in experiment output dir
         txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
@@ -295,10 +295,23 @@ rule convert_design_matrix:
             )
 
 
+# --- Helper function for conditional RC input ---
+def get_rc_path_or_empty(wildcards):
+    """Returns the rc_path if data_type is 'rc', otherwise an empty list."""
+    validation_info = get_validation_info(wildcards.experiment)
+    if validation_info.get("data_type") == "rc":
+        # Return the path (which might be None if validation failed for rc type)
+        return validation_info.get("rc_path")
+    else:
+        # Return empty list for non-rc types to avoid InputFunctionException
+        return []
+
+
 # --- Rule to Convert Input Read Count CSV to TSV ---
 rule convert_read_count_input:
     input:
-        rc_csv=lambda wc: get_validation_info(wc.experiment).get("rc_path"),
+        # Use helper function to handle non-rc types gracefully during DAG build
+        rc_csv=get_rc_path_or_empty,
     output:
         # Output is still defined/touched by Snakemake initially
         count_txt=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
@@ -307,11 +320,12 @@ rule convert_read_count_input:
     run:
         validation_info = get_validation_info(wildcards.experiment)
 
+        # Run block logic remains the same - handles skipping execution
         if (
             validation_info["status"] == "valid"
             and validation_info.get("data_type") == "rc"
         ):
-            input_rc_path = validation_info.get("rc_path")
+            input_rc_path = validation_info.get("rc_path") # Re-fetch path here for clarity
             if input_rc_path and Path(input_rc_path).exists():
                 print(
                     f"[{datetime.now()}] {wildcards.experiment}: Converting input read count file: {input_rc_path} to {output.count_txt}"
@@ -350,6 +364,7 @@ rule convert_read_count_input:
                     raise e
             else:
                 # Log warning and exit cleanly (no output expected)
+                # This case handles if type is 'rc' but file doesn't exist
                 warn_msg = f"Warning: data_type is 'rc' but rc_path not found/valid for {wildcards.experiment}. Skipping conversion."
                 print(f"[{datetime.now()}] {wildcards.experiment}: {warn_msg}")
                 with open(str(log), "w") as f:
@@ -357,7 +372,7 @@ rule convert_read_count_input:
                 # No touch() needed here, exit cleanly
                 sys.exit(0)
         else:
-            # Log info and exit cleanly (no output expected)
+            # Log info and exit cleanly (no output expected) - handles non 'rc' types
             info_msg = f"Skipping read count conversion for {wildcards.experiment} (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
             print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
             with open(str(log), "w") as f:
@@ -427,13 +442,16 @@ def get_contrast_names(wildcards, checkpoints):
 
 # --- Function to get the primary FASTQ file for a sample basename ---
 def get_fastq_for_sample(wildcards):
-    """Find the R1 or single-end FASTQ for a given sample basename."""
+    """Find the R1 or single-end FASTQ for a given sample basename.
+    Returns empty list if experiment type is not 'fastq' or validation failed.
+    """
     validation_info = get_validation_info(wildcards.experiment)
     if (
         validation_info["status"] != "valid"
         or validation_info.get("data_type") != "fastq"
     ):
-        return None  # Or raise error
+        # Return empty list instead of None
+        return []
 
     fastq_files = validation_info.get("fastq_files", [])
     # Prefer R1
@@ -446,25 +464,30 @@ def get_fastq_for_sample(wildcards):
     for f in fastq_files:
         if Path(f).name.startswith(wildcards.sample):
             return f
-    return None  # Not found
+    # Return empty list if not found (though this case is unlikely if basenames were derived correctly)
+    return []
 
 
 # --- Function to get the R2 FASTQ file for a sample basename ---
 def get_fastq_r2_for_sample(wildcards):
-    """Find the R2 FASTQ for a given sample basename, if it exists."""
+    """Find the R2 FASTQ for a given sample basename, if it exists.
+    Returns empty list if experiment type is not 'fastq' or R2 not found.
+    """
     validation_info = get_validation_info(wildcards.experiment)
     if (
         validation_info["status"] != "valid"
         or validation_info.get("data_type") != "fastq"
     ):
-        return None
+        # Return empty list instead of None
+        return []
 
     fastq_files = validation_info.get("fastq_files", [])
     # Look for R2 specifically
     for f in fastq_files:
         if Path(f).name.startswith(wildcards.sample) and "_R2" in Path(f).name:
             return f
-    return None  # R2 not found
+    # Return empty list if R2 not found
+    return []
 
 
 # --- Rule to run FastQC on individual FASTQ files ---
