@@ -150,23 +150,29 @@ def run_mageck_count(
     # Ensure output directory exists on host
     host_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Define host directories for mounting
-    host_r1_dir = r1_file.parent.resolve()
+    # --- Mount Logic --- 
+    # Identify the common directory containing R1 and (potentially) R2 files
+    # Assumption: R1 and R2 are in the same directory
+    host_fastq_dir = r1_file.parent.resolve()
     host_lib_dir = lib_file.parent.resolve()
-    host_r2_dir = r2_file.parent.resolve() if r2_file else None
 
-    # Define mount points and container paths
-    container_r1_dir = "/data/fastq/r1"
+    # Define container mount points
+    container_fastq_dir = "/data/fastq" 
     container_lib_dir = "/data/library"
     container_output_dir = "/data/output"
-    container_r1_path = f"{container_r1_dir}/{r1_file.name}"
-    container_lib_path = f"{container_lib_dir}/{lib_file.name}"
 
+    # Define container file paths relative to mount points
+    container_r1_path = f"{container_fastq_dir}/{r1_file.name}"
+    container_lib_path = f"{container_lib_dir}/{lib_file.name}"
+    container_r2_path = f"{container_fastq_dir}/{r2_file.name}" if r2_file else None # Path inside container
+
+    # Define the mount map
     mount_map = {
-        str(host_r1_dir): container_r1_dir,
+        str(host_fastq_dir): container_fastq_dir, # Mount the single FASTQ dir
         str(host_lib_dir): container_lib_dir,
         str(host_output_dir): container_output_dir
     }
+    # --- End Mount Logic ---
 
     # Prepare MAGeCK count command
     command_list = ["mageck", "count"]
@@ -180,13 +186,8 @@ def run_mageck_count(
     command_list.extend(["--sample-label", sample_name])
     command_list.extend(["--output-prefix", container_output_prefix])
 
-    # Add R2 if provided
-    if r2_file and host_r2_dir:
-        container_r2_dir = "/data/fastq/r2"
-        container_r2_path = f"{container_r2_dir}/{r2_file.name}"
-        # Add mount if R2 dir is different from R1 dir
-        if str(host_r2_dir) not in mount_map:
-             mount_map[str(host_r2_dir)] = container_r2_dir
+    # Add R2 if provided (path is already defined relative to container_fastq_dir)
+    if container_r2_path:
         command_list.extend(["--fastq-2", container_r2_path])
 
     # Add additional options

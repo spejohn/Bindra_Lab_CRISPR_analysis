@@ -534,17 +534,22 @@ rule run_mageck_count_per_sample:
         r1=get_fastq_for_sample,
         r2=get_fastq_r2_for_sample, # May return None if single-end
         library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
-        sif=MAGECK_SIF,
+        sif=MAGECK_SIF, # Keep SIF as input for dependency
     output:
-        # Define both expected outputs, mark summary as temporary if desired
         count_txt=OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.count.txt",
         summary=temp(OUTPUT_DIR / "{experiment}" / "counts" / "{sample}.countsummary.txt"),
     params:
-        output_prefix=lambda wc, output: str(Path(output.count_txt).parent / wc.sample),
-        sample_name="{sample}",
-        library_path=lambda wc: get_validation_info(wc.experiment).get("library_path"),
-        count_options=config.get("mageck_count_options", {}), # Get options from config if needed
-        # use_apptainer=config["use_apptainer"], # REMOVED
+        # Define paths relative to container mounts
+        r1_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r1)).name}",
+        r2_container_path=lambda wc, input: f"/data/fastq/{Path(str(input.r2)).name}" if input.r2 else "",
+        library_container_path=lambda wc, input: f"/data/library/{Path(str(input.library)).name}",
+        output_prefix_container="/data/output/{sample}",
+        # Define host paths for binding
+        fastq_dir_host=lambda wc, input: str(Path(str(input.r1)).parent),
+        library_dir_host=lambda wc, input: str(Path(str(input.library)).parent),
+        output_dir_host=lambda wc, output: str(Path(str(output.count_txt)).parent),
+        # Mageck options from config
+        count_options_str=lambda wc: format_options(config.get("mageck_count_options", {})),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_count_{sample}.log",
     threads: 1 # MAGeCK count is typically single-threaded
@@ -554,68 +559,26 @@ rule run_mageck_count_per_sample:
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-    run:
-        validation_info = get_validation_info(wildcards.experiment)
-        if validation_info["status"] != "valid" or validation_info.get("data_type") != "fastq":
-            info_msg = f"Skipping MAGeCK count for {wildcards.experiment}/{wildcards.sample}: Not a valid FASTQ experiment."
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {info_msg}")
-            with open(str(log), "w") as f: f.write(info_msg)
-            # Create dummy outputs to satisfy Snakemake if skipped
-            # touch(output.count_txt)
-            # touch(output.summary)
-            sys.exit(0) # Exit cleanly
-
-        if not params.library_path or not Path(params.library_path).exists():
-            error_msg = f"ERROR: Library file not found for {wildcards.experiment}: {params.library_path}"
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {error_msg}")
-            with open(str(log), "w") as f: f.write(error_msg)
-            raise FileNotFoundError(error_msg)
-
-        print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: Running MAGeCK count...")
-        try:
-            # Ensure the output directory exists before calling the function
-            Path(params.output_prefix).parent.mkdir(parents=True, exist_ok=True)
-
-            success, msg_or_path = run_mageck_count(
-                r1_fastq=str(input.r1),
-                r2_fastq=str(input.r2) if input.r2 else None, # Pass R2 only if it exists
-                library_path=params.library_path,
-                output_prefix=params.output_prefix,
-                sample_name=params.sample_name,
-                count_options=params.count_options,
-                use_apptainer=True, # Assuming container use defined by profile/flag
-                container_image=str(input.sif) # Pass SIF path as image
-            )
-
-            if not success:
-                error_msg = f"MAGeCK count failed for {wildcards.sample}: {msg_or_path}"
-                print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
-                with open(str(log), "w") as f: f.write(error_msg)
-                # Potentially touch outputs even on failure if needed by workflow logic,
-                # but raising error is usually better.
-                raise RuntimeError(error_msg)
-            else:
-                print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: MAGeCK count successful. Output: {msg_or_path}")
-                # Verify the expected output files were actually created by the function
-                if not Path(output.count_txt).exists() or not Path(output.summary).exists():
-                     warn_msg = f"Warning: run_mageck_count reported success but expected output files missing ({output.count_txt}, {output.summary})"
-                     print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.sample}: {warn_msg}")
-                     with open(str(log), "a") as f: f.write(f"\n{warn_msg}")
-                     # Decide if this should be a fatal error
-                     # raise FileNotFoundError(warn_msg)
-
-
-        except NameError:
-            error_msg = "ERROR: run_mageck_count function not found/imported."
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
-            with open(str(log), "w") as f: f.write(error_msg)
-            raise
-        except Exception as e:
-            error_msg = f"Error running MAGeCK count for {wildcards.sample}: {e}"
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.sample}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise e
+    shell:
+        # Construct the apptainer command directly
+        # Ensure output directory exists on host first
+        r"""
+        mkdir -p {params.output_dir_host}
+        apptainer exec \
+            --bind {params.fastq_dir_host}:/data/fastq \
+            --bind {params.library_dir_host}:/data/library \
+            --bind {params.output_dir_host}:/data/output \
+            --pwd /data/output \
+            {input.sif} \
+            mageck count \
+                --fastq {params.r1_container_path} \
+                $(test -n "{params.r2_container_path}" && echo "--fastq-2 {params.r2_container_path}") \
+                --list-seq {params.library_container_path} \
+                --sample-label {wildcards.sample} \
+                --output-prefix {params.output_prefix_container} \
+                {params.count_options_str} \
+                > {log} 2>&1
+        """
 
 
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
