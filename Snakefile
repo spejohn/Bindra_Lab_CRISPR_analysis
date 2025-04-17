@@ -814,7 +814,7 @@ rule run_mageck_rra_per_contrast:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
             # Input contrast file name is now dynamic via the lambda function
             df = pd.read_csv(input.contrasts_txt, sep='\t') # Needs double escape for regex/string
-            contrast_row = df[df['name'] == wildcards.contrast]
+            contrast_row = df[df['contrast'] == wildcards.contrast] # Use 'contrast' column name
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
                 treatment_samples = contrast_row.iloc[0]['treatment']
@@ -927,7 +927,7 @@ rule run_drugz_per_contrast:
             # Simple parsing assuming tab-delimited with header: name, treatment, control
             # Input contrast file name is now dynamic via the lambda function
             df = pd.read_csv(input.contrasts_txt, sep='\t') # Needs double escape for regex/string
-            contrast_row = df[df['name'] == wildcards.contrast]
+            contrast_row = df[df['contrast'] == wildcards.contrast] # Use 'contrast' column name
             if not contrast_row.empty:
                 # Assuming treatment and control columns contain comma-separated strings already
                 treatment_samples = contrast_row.iloc[0]['treatment']
