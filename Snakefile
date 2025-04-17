@@ -768,6 +768,30 @@ def format_options(options_dict):
             parts.append(f"{formatted_key} {shlex.quote(str(value))}") # Quote values
     return " ".join(parts)
 
+# NEW Helper function specifically for RRA/DrugZ rules to parse the *converted* TXT
+def parse_contrast_samples_from_txt(contrast_txt_path: str, contrast_name: str, sample_type: str) -> str:
+    """Parses the converted contrast.txt file to get treatment/control samples."""
+    try:
+        df = pd.read_csv(contrast_txt_path, sep='\t')
+        contrast_row = df[df['contrast'] == contrast_name] # Use 'contrast' column
+        if not contrast_row.empty:
+            samples_str = contrast_row.iloc[0][sample_type]
+            # Basic validation: ensure it's a non-empty string
+            if isinstance(samples_str, str) and samples_str.strip():
+                return samples_str
+            else:
+                raise ValueError(f"Invalid or empty sample list found for '{sample_type}' in contrast '{contrast_name}'")
+        else:
+            raise ValueError(f"Contrast '{contrast_name}' not found in {contrast_txt_path}")
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Contrast file not found: {contrast_txt_path}")
+    except KeyError:
+         # Raised if 'contrast', 'treatment', or 'control' columns are missing
+        raise KeyError(f"Required column missing in {contrast_txt_path}. Expecting 'contrast', 'treatment', 'control'.")
+    except Exception as e:
+        # Catch other potential errors during parsing
+        raise RuntimeError(f"Error parsing contrasts file {contrast_txt_path} for contrast '{contrast_name}': {e}") from e
+
 # --- Rule to run MAGeCK RRA per contrast ---
 rule run_mageck_rra_per_contrast:
     input:
@@ -790,59 +814,40 @@ rule run_mageck_rra_per_contrast:
         # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(
             {**{"norm-method": config.get("mageck_norm_method", "median")},
-             **config.get("mageck_rra_options", {})})
+             **config.get("mageck_rra_options", {})}),
+        # NEW: Get treatment/control samples by parsing the input TXT
+        treatment_samples=lambda wc, input: parse_contrast_samples_from_txt(
+            contrast_txt_path=str(input.contrasts_txt),
+            contrast_name=wc.contrast,
+            sample_type='treatment'
+        ),
+        control_samples=lambda wc, input: parse_contrast_samples_from_txt(
+            contrast_txt_path=str(input.contrasts_txt),
+            contrast_name=wc.contrast,
+            sample_type='control'
+        ),
+        # Output prefix (absolute path, without extension)
+        output_prefix_abs=lambda wc, output: str(Path(output.gene_summary).with_suffix('')),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-    run:
-        # Imports needed within the run block scope
-        import pandas as pd
-        import shlex
-        from snakemake.shell import shell # Explicit import might help, though usually implicit
-        # Needed for logging inside run block
-        from datetime import datetime
-        from pathlib import Path
-
-
-        # Parse contrasts inside the run block from input.contrasts_txt
-        treatment_samples = ""
-        control_samples = ""
-        try:
-            # Simple parsing assuming tab-delimited with header: name, treatment, control
-            # Input contrast file name is now dynamic via the lambda function
-            df = pd.read_csv(input.contrasts_txt, sep='\t') # Needs double escape for regex/string
-            contrast_row = df[df['contrast'] == wildcards.contrast] # Use 'contrast' column name
-            if not contrast_row.empty:
-                # Assuming treatment and control columns contain comma-separated strings already
-                treatment_samples = contrast_row.iloc[0]['treatment']
-                control_samples = contrast_row.iloc[0]['control']
-            else:
-                raise ValueError(f"Contrast '{wildcards.contrast}' not found in {input.contrasts_txt}")
-        except Exception as e:
-             # Log error and raise
-            error_msg = f"Error parsing contrasts file {input.contrasts_txt} for contrast {wildcards.contrast}: {e}"
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
-            with open(str(log), "w") as f: f.write(error_msg)
-            raise RuntimeError(error_msg) from e # Raise exception to stop the rule
-
-        # Construct the command string using a relative output prefix
-        # Snakemake will execute this in the mounted output directory
-        output_prefix_abs = Path(output.gene_summary).with_suffix('') # Get absolute path prefix
-        command = f"""
+    shell:
+        # Ensure log directory exists, then run mageck test
+        # Use shlex.quote for sample lists as they might contain commas
+        # Note: No trailing backslash needed on the last line before > {log}
+        """
         mkdir -p $(dirname {log}) && \
         mageck test \
             -k {input.count_file} \
-            -t {shlex.quote(treatment_samples)} \
-            -c {shlex.quote(control_samples)} \
-            -n {output_prefix_abs} \
+            -t {params.treatment_samplesq} \
+            -c {params.control_samplesq} \
+            -n {params.output_prefix_abs} \
             {params.analysis_options_str} \
             > {log} 2>&1
         """
-        # Execute the command
-        shell(command)
 
 
 # --- Rule to run MAGeCK MLE per experiment (Conditional) ---
