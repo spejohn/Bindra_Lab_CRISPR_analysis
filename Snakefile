@@ -1330,13 +1330,28 @@ rule generate_qc_report:
         / "qc"
         / "{experiment}_gene_distribution.html",
         gini=OUTPUT_DIR / "{experiment}" / "qc" / "{experiment}_gini_index.html",
-        roc_curves=lambda wc: expand(
-            OUTPUT_DIR
-            / wc.experiment
-            / "qc"
-            / f"{wc.experiment}_{{contrast}}_roc.html",
-            contrast=get_contrast_names(SimpleNamespace(experiment=wc.experiment)),
-        ),
+        # Modify the lambda to fetch and pass the contrast_csv_path
+        roc_curves=lambda wc: (
+            # Fetch validation info and contrast path first
+            validation_info := get_validation_info(wc.experiment),
+            contrast_csv_path := validation_info.get("contrasts_path"),
+            # Get contrast names, handle None path
+            contrasts := (
+                get_contrast_names(
+                    SimpleNamespace(experiment=wc.experiment),
+                    contrast_csv_path=contrast_csv_path
+                )
+                if contrast_csv_path else []
+            ),
+            # Perform the expand using the fetched contrasts
+            expand(
+                OUTPUT_DIR
+                / wc.experiment
+                / "qc"
+                / f"{wc.experiment}_{{contrast}}_roc.html",
+                contrast=contrasts,
+            )
+        )[-1], # Return the last element (the result of expand)
         fastqc_reports=lambda wc: (
             expand(
                 OUTPUT_DIR / wc.experiment / "qc" / "{sample}_fastqc.html",

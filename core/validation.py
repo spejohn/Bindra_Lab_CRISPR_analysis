@@ -16,7 +16,6 @@ from core.config import (
     FASTQ_PATTERNS
 )
 
-
 def validate_library_file(library_file: str, output_dir: str) -> str:
     """
     Validate the library file and potentially create a fixed version.
@@ -290,122 +289,234 @@ def check_existing_files(input_dir: str, output_dir: str) -> Set[str]:
 
 def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, bool, List[str]]]:
     """
-    Checks the existence and basic structure of required files within an experiment directory.
+    Validates the structure of a single experiment directory.
+    Checks for required files (contrasts, library) and identifies data type.
 
     Args:
         experiment_dir: Path to the experiment directory.
 
     Returns:
-        A dictionary summarizing findings:
-        {'status': 'valid',
-         'data_type': 'fastq' or 'rc',
-         'contrasts_path': path_to_contrasts.csv,
-         'library_path': path_to_library.csv or None,
-         'rc_path': path_to_rc_file or None,
-         'design_matrix_path': path_to_design_matrix.csv or None,
-         'fastq_dir': path_to_fastq_dir or None,
-         'fastq_files': list_of_fastq_files or None,
-         'mle_possible': True or False}
-
-    Raises:
-        ValueError: If the directory structure is invalid or missing required files.
+        A dictionary containing validation status, paths, and detected data type.
+        Example: {'status': 'valid', 'data_type': 'fastq', 'contrasts_path': '...', ...}
+               {'status': 'failed', 'error': 'Reason for failure'}
     """
     logger = logging.getLogger(__name__)
+    logger.info(f"Validating structure of experiment directory: {experiment_dir}")
     exp_path = Path(experiment_dir)
-    logger.info(f"Validating structure of experiment directory: {exp_path}")
+    info: Dict[str, Union[str, bool, List[str], None]] = {
+        "status": "valid",
+        "data_type": None,
+        "contrasts_path": None,
+        "library_path": None,
+        "rc_path": None,
+        "design_matrix_path": None,
+        "fastq_dir": None,
+        "fastq_files": [],
+        "mle_possible": False,
+        "error": None
+    }
 
     if not exp_path.is_dir():
-        raise ValueError(f"Experiment directory not found: {experiment_dir}")
+        err_msg = f"Experiment directory not found: {experiment_dir}"
+        logger.error(err_msg)
+        info["status"] = "failed"
+        info["error"] = err_msg
+        return info
 
-    # --- Check for required contrasts file --- 
-    # Allow for flexible naming patterns (*contrasts.csv/txt, *_cnttbl.csv/txt)
-    contrast_patterns = ["*contrasts.csv", "*_cnttbl.csv", "*contrasts.txt", "*_cnttbl.txt"]
-    contrasts_files = []
-    for pattern in contrast_patterns:
-        contrasts_files.extend(list(exp_path.glob(pattern)))
+    # --- Find Required Files --- 
+
+    # 1. Find Contrasts File (mandatory)
+    contrast_files = list(exp_path.glob("*contrast*.csv"))
+    contrast_files.extend(list(exp_path.glob("*contrast*.txt")))
+    if not contrast_files:
+        err_msg = f"Mandatory contrasts file (*contrast*.csv or *contrast*.txt) not found in {experiment_dir}."
+        logger.error(err_msg)
+        info["status"] = "failed"
+        info["error"] = err_msg
+        return info
+    elif len(contrast_files) > 1:
+        logger.warning(f"Multiple contrast files found in {experiment_dir}. Using the first one: {contrast_files[0]}")
+    info["contrasts_path"] = str(contrast_files[0])
+    logger.info(f"Found contrasts file: {info['contrasts_path']}")
+
+    # 2. Find Library File (mandatory)
+    library_patterns = ["*library*.csv", "*library*.txt", "*guide*.csv", "*guide*.txt"]
+    library_files = []
+    for pattern in library_patterns:
+        library_files.extend(list(exp_path.glob(pattern)))
     
-    # Filter out directories if any match the pattern (glob can sometimes include dirs)
-    contrasts_files = [f for f in contrasts_files if f.is_file()]
+    if not library_files:
+        err_msg = f"Mandatory library/guide file ({'/'.join(library_patterns)}) not found in {experiment_dir}."
+        logger.error(err_msg)
+        info["status"] = "failed"
+        info["error"] = err_msg
+        return info
+    elif len(library_files) > 1:
+         logger.warning(f"Multiple library/guide files found in {experiment_dir}. Using the first one: {library_files[0]}")
+    info["library_path"] = str(library_files[0])
+    logger.info(f"Found library file: {info['library_path']}")
+    
+    # *** Add Library Header Order Check ***
+    try:
+        # Read only the header using pandas to auto-detect separator
+        lib_header_df = pd.read_csv(
+            info["library_path"], 
+            sep=None, # Auto-detect separator (comma or tab)
+            engine='python', # Needed for sep=None
+            nrows=0, # Read only header
+            encoding='utf-8-sig' # Handle potential BOM
+        )
+        lib_columns = [col.lower().strip() for col in lib_header_df.columns]
+        
+        # Use LIBRARY_REQUIRED_COLUMNS (lowercase) for order check
+        expected_order_lower = [col.lower() for col in LIBRARY_REQUIRED_COLUMNS]
+        
+        if len(lib_columns) < 3:
+             # Use expected_order_lower in the error message
+            raise ValueError(f"Library file has fewer than 3 columns ({len(lib_columns)} found). Expected at least: {expected_order_lower}")
+            
+        # Check the first three columns in order (case-insensitive)
+        first_three_cols = lib_columns[:3]
+        # Compare against expected_order_lower
+        if first_three_cols != expected_order_lower:
+             raise ValueError(
+                f"Incorrect library file column order. Expected first three columns: "
+                # Use expected_order_lower in the error message
+                f"{expected_order_lower}. Found: {first_three_cols}. "
+                f"Full columns found: {lib_columns}"
+            )
+        logger.info(f"Library file header order validated successfully: {first_three_cols}...")
+            
+    except Exception as e:
+        err_msg = f"Error validating library file header ({info['library_path']}): {e}"
+        logger.error(err_msg)
+        info["status"] = "failed"
+        info["error"] = err_msg
+        return info
+    # *** End Library Header Order Check ***
 
-    if not contrasts_files:
-        raise ValueError(f"Missing required contrasts file (matching patterns: {contrast_patterns}) in {experiment_dir}")
-    if len(contrasts_files) > 1:
-        # Sort for deterministic selection if multiple found
-        contrasts_files.sort()
-        logger.warning(f"Multiple contrast files found matching patterns in {experiment_dir}. Using the first one: {contrasts_files[0]}")
-    contrasts_path = str(contrasts_files[0])
-    logger.info(f"Found contrasts file: {contrasts_path}")
+    # --- Identify Data Type (FASTQ or Read Counts) --- 
+    # Prefer FASTQ if found
+    fastq_dir_path = exp_path / "fastq"
+    has_fastq_files = False
+    if fastq_dir_path.is_dir():
+        for pattern in FASTQ_PATTERNS:
+            found_files = list(fastq_dir_path.glob(pattern))
+            if found_files:
+                info["fastq_files"].extend([str(f) for f in found_files])
+                has_fastq_files = True
+        if has_fastq_files:
+            info["data_type"] = "fastq"
+            info["fastq_dir"] = str(fastq_dir_path)
+            logger.info(f"Found fastq data directory: {info['fastq_dir']} with {len(info['fastq_files'])} fastq.gz/fq.gz files.")
 
-    # --- Check for data type (FASTQ or RC) --- 
-    fastq_dir = exp_path / "fastq"
-    # Look for read count files (e.g., *_rc.csv, experiment_counts.csv)
-    rc_files = list(exp_path.glob("*_rc.csv")) + list(exp_path.glob("experiment_counts.csv"))
+    # If no FASTQ, check for read count file
+    if not has_fastq_files:
+        rc_patterns = ["*read_count*.csv", "*read_count*.txt", "*counts*.csv", "*counts*.txt"]
+        rc_files = []
+        for pattern in rc_patterns:
+             # Search directly in experiment_dir first
+            rc_files.extend(list(exp_path.glob(pattern)))
+             # Then check common subdirs like 'counts' or 'rc'
+            for sub in ["counts", "rc", "read_counts"]:
+                rc_files.extend(list((exp_path / sub).glob(pattern)))
+        
+        # Filter out library/contrast files that might match count patterns
+        rc_files = [
+            f for f in rc_files 
+            if f.name != Path(info["contrasts_path"]).name and 
+               f.name != Path(info["library_path"]).name
+        ]
+        
+        if rc_files:
+            info["data_type"] = "rc" # read counts
+            info["rc_path"] = str(rc_files[0]) # Use the first one found
+            if len(rc_files) > 1:
+                logger.warning(f"Multiple read count files found in {experiment_dir} or subdirs. Using the first one: {info['rc_path']}")
+            logger.info(f"Found read count data file: {info['rc_path']}")
+        else:
+            # If neither FASTQ nor RC file found
+            err_msg = f"No FASTQ data directory or read count file found in {experiment_dir}. Cannot determine data type."
+            logger.error(err_msg)
+            info["status"] = "failed"
+            info["error"] = err_msg
+            return info
 
-    has_fastq = fastq_dir.is_dir()
-    has_rc = bool(rc_files)
+    # --- Optional: Find Design Matrix for MLE --- 
+    design_matrix_patterns = ["*design_matrix*.csv", "*design_matrix*.txt", "*design*.csv", "*design*.txt"]
+    design_files = []
+    for pattern in design_matrix_patterns:
+        design_files.extend(list(exp_path.glob(pattern)))
+    
+    # Filter out contrast/library/rc files that might match design patterns
+    potential_conflicts = {Path(p).name for p in [info["contrasts_path"], info["library_path"], info["rc_path"]] if p}
+    design_files = [f for f in design_files if f.name not in potential_conflicts]
 
-    data_type = None
-    library_path = None
-    rc_path = None
-    fastq_dir_path = None
-    fastq_files_list = None
-
-    if has_fastq:
-        data_type = "fastq"
-        fastq_dir_path = str(fastq_dir)
-        fastq_files_list = [str(f) for f in fastq_dir.glob("*.fastq.gz")] + \
-                           [str(f) for f in fastq_dir.glob("*.fq.gz")]
-        if not fastq_files_list:
-             raise ValueError(f"fastq directory found in {experiment_dir}, but it contains no .fastq.gz or .fq.gz files.")
-        logger.info(f"Found fastq data directory: {fastq_dir_path} with {len(fastq_files_list)} fastq.gz/fq.gz files.")
-
-        # Library file is required for FASTQ
-        library_files = list(exp_path.glob("*library.csv"))
-        if not library_files:
-            raise ValueError(f"Missing required library file (*library.csv) for FASTQ processing in {experiment_dir}")
-        if len(library_files) > 1:
-             logger.warning(f"Multiple library files found in {experiment_dir}, using {library_files[0]}")
-        library_path = str(library_files[0])
-        logger.info(f"Found library file: {library_path}")
-
-        if has_rc:
-            logger.warning(f"Both fastq directory and read count file(s) ({[str(f) for f in rc_files]}) found in {experiment_dir}. Prioritizing fastq for analysis type determination.")
-            # Decide on priority or specific handling TBD - for now, just note it.
-
-    elif has_rc:
-        data_type = "rc"
-        if len(rc_files) > 1:
-            logger.warning(f"Multiple read count files found in {experiment_dir}, using {rc_files[0]}")
-        rc_path = str(rc_files[0])
-        logger.info(f"Found read count file: {rc_path}")
-    else:
-        raise ValueError(f"Missing data files in {experiment_dir}. Expected either a 'fastq/' subdirectory or a '*_rc.csv'/'experiment_counts.csv' file.")
-
-    # --- Check for optional design matrix --- 
-    # Allow for .csv or .txt initially
-    design_files = list(exp_path.glob("design_matrix.csv")) + list(exp_path.glob("design_matrix.txt"))
-    design_matrix_path = None
-    mle_possible = False
     if design_files:
+        info["design_matrix_path"] = str(design_files[0])
+        info["mle_possible"] = True
         if len(design_files) > 1:
-             logger.warning(f"Multiple design matrix files found in {experiment_dir}, using {design_files[0]}")
-        design_matrix_path = str(design_files[0])
-        mle_possible = True
-        logger.info(f"Found design matrix file: {design_matrix_path} (MLE possible)")
+            logger.warning(f"Multiple design matrix files found in {experiment_dir}. Using the first one: {info['design_matrix_path']}")
+        logger.info(f"Found design matrix file: {info['design_matrix_path']} (MLE possible)")
     else:
         logger.info(f"No design matrix file found in {experiment_dir} (MLE not possible).")
+        info["mle_possible"] = False
 
-    # --- Return summary --- 
-    validation_summary = {
-        'status': 'valid',
-        'data_type': data_type,
-        'contrasts_path': contrasts_path,
-        'library_path': library_path,
-        'rc_path': rc_path,
-        'design_matrix_path': design_matrix_path,
-        'fastq_dir': fastq_dir_path,
-        'fastq_files': fastq_files_list,
-        'mle_possible': mle_possible
-    }
-    logger.info(f"Validation summary for {experiment_dir}: {validation_summary}")
-    return validation_summary 
+    # Final status check
+    if info["status"] == "valid":
+        logger.info(f"Validation summary for {experiment_dir}: {info}")
+    else:
+        # Log the error again for clarity before returning
+        logger.error(f"Validation failed for {experiment_dir}: {info['error']}")
+        
+    return info
+
+
+# Example usage (if run directly)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    # Create dummy structure for testing
+    test_dir = Path("temp_validation_test")
+    test_dir.mkdir(exist_ok=True)
+    (test_dir / "exp1").mkdir(exist_ok=True)
+    (test_dir / "exp1" / "my_contrasts.csv").touch()
+    (test_dir / "exp1" / "my_library.csv").write_text("sgrna,sequence,gene\nAG1,AAA,GENE1\nAG2,CCC,GENE2")
+    (test_dir / "exp1" / "fastq").mkdir(exist_ok=True)
+    (test_dir / "exp1" / "fastq" / "sample1_R1.fastq.gz").touch()
+    (test_dir / "exp1" / "fastq" / "sample1_R2.fastq.gz").touch()
+    (test_dir / "exp1" / "exp1_design.txt").touch()
+
+    (test_dir / "exp2").mkdir(exist_ok=True)
+    (test_dir / "exp2" / "my_contrasts_exp2.txt").touch()
+    (test_dir / "exp2" / "my_guide_library.txt").write_text("sgrna\tgene\tsequence\nAG1\tGENE1\tAAA\nAG2\tGENE2\tCCC") # Incorrect order
+    (test_dir / "exp2" / "counts").mkdir(exist_ok=True)
+    (test_dir / "exp2" / "counts" / "exp2_counts.csv").touch()
+    
+    (test_dir / "exp3_nolib").mkdir(exist_ok=True)
+    (test_dir / "exp3_nolib" / "exp3_contrasts.csv").touch()
+    (test_dir / "exp3_nolib" / "fastq").mkdir(exist_ok=True)
+    (test_dir / "exp3_nolib" / "fastq" / "s1.fq.gz").touch()
+
+    print("--- Testing exp1 (FASTQ, Design Matrix, Correct Lib Header) ---")
+    info1 = validate_experiment_structure(str(test_dir / "exp1"))
+    print(info1)
+    assert info1["status"] == "valid"
+    assert info1["data_type"] == "fastq"
+    assert info1["mle_possible"] == True
+
+    print("\n--- Testing exp2 (RC, Incorrect Lib Header) ---")
+    info2 = validate_experiment_structure(str(test_dir / "exp2"))
+    print(info2)
+    assert info2["status"] == "failed"
+    assert "Incorrect library file column order" in info2["error"]
+
+    print("\n--- Testing exp3 (No Library) ---")
+    info3 = validate_experiment_structure(str(test_dir / "exp3_nolib"))
+    print(info3)
+    assert info3["status"] == "failed"
+    assert "Mandatory library/guide file" in info3["error"]
+
+    # Clean up dummy files
+    import shutil
+    shutil.rmtree(test_dir)
+    print("\nCleanup complete.") 

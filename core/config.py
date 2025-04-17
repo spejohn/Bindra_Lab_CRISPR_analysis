@@ -25,7 +25,7 @@ RESULTS_DRUGZ_PATTERN = "*_gDZ.csv"
 DESIGN_MATRIX_PATTERN = "*design*.txt"  # New pattern for design matrix files
 
 # Required columns
-LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "gene", "sequence"]
+LIBRARY_REQUIRED_COLUMNS = ["sgRNA", "sequence", "gene"]
 CONTRAST_REQUIRED_COLUMNS = ["contrast", "treatment", "control"]
 SAMPLE_SHEET_COLUMNS = ["sample_name", "fastq_path"]
 SAMPLE_SHEET_REQUIRED_COLUMNS = ["sample", "fastq_file", "condition"]  # Adding this for test compatibility
