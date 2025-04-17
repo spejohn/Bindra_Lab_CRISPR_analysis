@@ -164,16 +164,31 @@ ValidationCache = {}
 
 def get_validation_info(experiment):
     global ValidationCache
+    # Check for slash in experiment name
+    if '/' in experiment or '\\' in experiment:
+        print(f"CRITICAL WARNING: get_validation_info called with potentially invalid experiment name containing slash: '{experiment}'")
+        # Return a failure state immediately to prevent downstream issues.
+        return {"status": "failed", "error": f"Invalid experiment name format: '{experiment}'"}
+
     if experiment not in ValidationCache:
+        print(f"DEBUG: Cache miss for experiment: '{experiment}'") # Added quotes for clarity
         try:
             exp_path = str(BASE_DIR / experiment)
-            info = validate_experiment_structure(exp_path)
+            print(f"DEBUG: Validating structure for path: {exp_path}") # Log path being checked
+            info = validate_experiment_structure(exp_path) # Assuming this function is robust
             ValidationCache[experiment] = info
-            print(f"Validation successful for {experiment}")
+            print(f"DEBUG: Caching validation result for '{experiment}': {info}") # Log cached result
         except (ValueError, FileNotFoundError) as e:
-            print(f"ERROR: Validation failed for {experiment}: {e}")
+            print(f"ERROR: Validation failed for '{experiment}': {e}")
             ValidationCache[experiment] = {"status": "failed", "error": str(e)}
-    return ValidationCache[experiment]
+            print(f"DEBUG: Caching validation failure for '{experiment}'") # Log failure cache
+    else:
+         print(f"DEBUG: Cache hit for experiment: '{experiment}'")
+
+    # Log the value being returned
+    result = ValidationCache.get(experiment)
+    print(f"DEBUG: Returning validation info for '{experiment}': {result}")
+    return result
 
 
 # --- Helper function to dynamically determine the converted contrast/design matrix path ---
@@ -1250,9 +1265,9 @@ rule plot_gini_index:
 # Placeholder rule to plot ROC curve (requires controls)
 rule plot_roc_curve:
     input:
+        # Input should match the output of convert_rra_results
         mageck_results=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "{contrast}_gMGK.csv",
         known_controls=lambda wc: BASE_DIR / wc.experiment / "known_controls.csv",
     output:
