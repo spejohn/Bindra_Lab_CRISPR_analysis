@@ -15,15 +15,8 @@ from pathlib import Path
 import shlex # Import shlex for safer command splitting
 import datetime # Import datetime for timestamps
 
-# --- Define Snakefile Defaults ---
-# These should match the config.setdefault values in Snakefile
-SNAKEFILE_DEFAULTS = {
-    "skip_qc": False,
-    "skip_rra": False,
-    "skip_mle": False,
-    "skip_drugz": False,
-}
-# --- End Snakefile Defaults ---
+# Import settings from core.config
+from core.config import SNAKEFILE_DEFAULTS, LOG_LEVELS, DEFAULT_LOG_LEVEL
 
 def setup_logging():
     """Configure basic logging for the script to console and file."""
@@ -100,6 +93,12 @@ def parse_args():
     parser.add_argument("--profile", help="Path to Snakemake profile directory for cluster execution") # New argument
     parser.add_argument("--dryrun", action="store_true", help="Show what would be done without executing")
     
+    # Logging level for Snakefile execution
+    parser.add_argument("-l", "--log-level", 
+                        choices=LOG_LEVELS.keys(), 
+                        default=DEFAULT_LOG_LEVEL,
+                        help=f"Set the logging level for the Snakefile execution (default: {DEFAULT_LOG_LEVEL})")
+
     # Containerization flags (Mutually exclusive)
     container_group = parser.add_mutually_exclusive_group()
     container_group.add_argument("--use-apptainer", action="store_true", help="Use Apptainer for container execution")
@@ -156,11 +155,7 @@ def run_snakemake(args):
         "-j", str(cores),      # Max concurrent jobs for Snakemake scheduler
         "--config", # Start config definitions
         f"base_dir={args.base_dir}", # Pass base_dir
-        f"output_dir={output_dir}",
-        # REMOVED direct passing of skip flags here
-        # f"skip_drugz={str(args.skip_drugz).lower()}",
-        # f"skip_qc={str(args.skip_qc).lower()}",
-        # f"skip_mle={str(args.skip_mle).lower()}",
+        f"output_dir={output_dir}"
     ]
     
     # --- Add Skip Flags Conditionally ---
@@ -174,6 +169,10 @@ def run_snakemake(args):
     if args.skip_drugz != SNAKEFILE_DEFAULTS["skip_drugz"]:
         cmd_parts.append(f"skip_drugz={str(args.skip_drugz).lower()}")
     # --- End Conditional Skip Flags ---
+
+    # --- Add Log Level Config ---
+    cmd_parts.append(f"log_level={args.log_level}")
+    # --- End Log Level Config ---
 
     # Add target experiments if specified - use target_screens key for Snakefile
     if args.target_experiments:

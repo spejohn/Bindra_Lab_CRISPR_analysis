@@ -4,6 +4,7 @@ Configuration settings for CRISPR analysis pipeline.
 
 import os
 from pathlib import Path
+import logging
 
 # Docker settings
 DOCKER_IMAGE = "spejohn/mageck"  # Docker image for MAGeCK
@@ -84,3 +85,23 @@ MLE_DESIGN_MATRIX_PATTERNS = [      # Common file patterns for design matrix fil
     "*design_matrix.csv",
     "*design.csv"
 ]
+
+# --- Settings moved from run_snakemake.py ---
+
+# Snakefile Defaults (to check if CLI flags differ)
+SNAKEFILE_DEFAULTS = {
+    "skip_qc": False,
+    "skip_rra": False,
+    "skip_mle": False,
+    "skip_drugz": False,
+}
+
+# Logging Level Configuration
+LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+DEFAULT_LOG_LEVEL = "INFO"
