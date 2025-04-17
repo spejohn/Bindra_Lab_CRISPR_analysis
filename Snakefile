@@ -590,7 +590,7 @@ rule run_mageck_count_per_sample:
             # $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
             --list-seq {input.library} \
             --sample-label {wildcards.sample} \
-            --output-prefix ./{wildcards.sample} \
+            --output-prefix {Path(output.count_txt).with_suffix('')} \
             {params.count_options_str} \
             > {log} 2>&1
         """
@@ -829,14 +829,15 @@ rule run_mageck_rra_per_contrast:
 
         # Construct the command string using a relative output prefix
         # Snakemake will execute this in the mounted output directory
+        output_prefix_abs = Path(output.gene_summary).with_suffix('') # Get absolute path prefix
         command = f"""
         mkdir -p $(dirname {log}) && \
-        mageck test \\
-            -k {input.count_file} \\
-            -t {shlex.quote(treatment_samples)} \\
-            -c {shlex.quote(control_samples)} \\
-            -n {wildcards.contrast}_RRA \\
-            {params.analysis_options_str} \\
+        mageck test \
+            -k {input.count_file} \
+            -t {shlex.quote(treatment_samples)} \
+            -c {shlex.quote(control_samples)} \
+            -n {output_prefix_abs} \
+            {params.analysis_options_str} \
             > {log} 2>&1
         """
         # Execute the command
@@ -873,11 +874,11 @@ rule run_mageck_mle_per_experiment:
         # Run mageck mle using a relative output prefix.
         r"""
         mkdir -p $(dirname {log}) && \
-        mageck mle \\
-            -k {input.count_file} \\
-            -d {input.design_matrix} \\
-            -n {wildcards.experiment}_MLE \\
-            {params.analysis_options_str} \\
+        mageck mle \
+            -k {input.count_file} \
+            -d {input.design_matrix} \
+            -n {Path(output.gene_summary).with_suffix('')} \
+            {params.analysis_options_str} \
             > {log} 2>&1
         """
 
@@ -939,15 +940,16 @@ rule run_drugz_per_contrast:
 
         # Construct the command string using a relative output filename
         # Snakemake will execute this in the mounted output directory
-        output_filename = f"{wildcards.contrast}_DrugZ.txt"
+        # Use the absolute path for the output file
+        output_filename_abs = str(output.drugz_results)
         command = f"""
         mkdir -p $(dirname {log}) && \
-        python /drugz/drugz.py \\
-            --input {input.count_file} \\
-            --output "{output_filename}" \\
-            --control-id {shlex.quote(control_samples)} \\
-            --treatment-id {shlex.quote(treatment_samples)} \\
-            {params.analysis_options_str} \\
+        python /drugz/drugz.py \
+            --input {input.count_file} \
+            --output "{output_filename_abs}" \
+            --control-id {shlex.quote(control_samples)} \
+            --treatment-id {shlex.quote(treatment_samples)} \
+            {params.analysis_options_str} \
             > {log} 2>&1
         """
         # Execute the command
