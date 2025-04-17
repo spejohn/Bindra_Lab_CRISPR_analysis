@@ -827,17 +827,10 @@ rule run_mageck_rra_per_contrast:
         analysis_options_str=lambda wc: format_options(
             {**{"norm-method": config.get("mageck_norm_method", "median")},
              **config.get("mageck_rra_options", {})}),
-        treatment_samples=lambda wc, input: parse_contrast_samples_from_txt(
-            contrast_txt_path=str(input.contrasts_txt),
-            contrast_name=wc.contrast,
-            sample_type='treatment'
-        ),
-        control_samples=lambda wc, input: parse_contrast_samples_from_txt(
-            contrast_txt_path=str(input.contrasts_txt),
-            contrast_name=wc.contrast,
-            sample_type='control'
-        ),
-        # Updated output prefix to match simplified path
+        # REMOVED sample parsing from params
+        # treatment_samples=lambda wc, input: parse_contrast_samples_from_txt(...),
+        # control_samples=lambda wc, input: parse_contrast_samples_from_txt(...),
+        # Output prefix remains necessary for the command string
         output_prefix_abs=lambda wc, output: str(
             Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
         ),
@@ -846,19 +839,52 @@ rule run_mageck_rra_per_contrast:
     threads: 1
     container:
         str(MAGECK_SIF)
-    shell:
-        # Command remains the same, uses updated params.output_prefix_abs
-        """
+    # Changed from shell to run block
+    run:
+        # Imports needed within the run block scope
+        import pandas as pd
+        import shlex
+        from snakemake.shell import shell # Explicit import
+        # Needed for logging inside run block
+        from datetime import datetime
+        from pathlib import Path
+
+        # Parse contrasts inside the run block from input.contrasts_txt
+        treatment_samples = ""
+        control_samples = ""
+        try:
+            # Use the helper function that reads the TXT file
+            treatment_samples = parse_contrast_samples_from_txt(
+                contrast_txt_path=str(input.contrasts_txt),
+                contrast_name=wildcards.contrast,
+                sample_type='treatment'
+            )
+            control_samples = parse_contrast_samples_from_txt(
+                contrast_txt_path=str(input.contrasts_txt),
+                contrast_name=wildcards.contrast,
+                sample_type='control'
+            )
+        except Exception as e:
+             # Log error and raise
+            error_msg = f"Error parsing contrasts file {input.contrasts_txt} for contrast {wildcards.contrast} during RRA run: {e}"
+            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
+            with open(str(log), "w") as f: f.write(error_msg)
+            raise RuntimeError(error_msg) from e # Raise exception to stop the rule
+
+        # Construct the command string
+        command = f"""
         mkdir -p $(dirname {log}) && \
         mkdir -p $(dirname {output.gene_summary}) && \
         mageck test \
             -k {input.count_file} \
-            -t {params.treatment_samples} \
-            -c {params.control_samples} \
+            -t {shlex.quote(treatment_samples)} \
+            -c {shlex.quote(control_samples)} \
             -n {params.output_prefix_abs} \
             {params.analysis_options_str} \
             > {log} 2>&1
         """
+        # Execute the command
+        shell(command)
 
 
 # --- Rule to run MAGeCK MLE per experiment (Conditional) ---
