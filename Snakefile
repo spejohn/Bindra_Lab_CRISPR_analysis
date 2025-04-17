@@ -826,8 +826,10 @@ rule run_mageck_rra_per_contrast:
             contrast_name=wc.contrast,
             sample_type='control'
         ),
-        # Output prefix (absolute path, without extension)
-        output_prefix_abs=lambda wc, output: str(Path(output.gene_summary).with_suffix('')),
+        # Output prefix (absolute path, without extension) - Construct using contrast wildcard
+        output_prefix_abs=lambda wc, output: str(
+            Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
+        ),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
@@ -1543,6 +1545,8 @@ def get_final_outputs(wildcards):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
     print("--- Entering get_final_outputs ---") # DEBUG
+    # ADD DEBUG PRINT for skip_drugz config value
+    print(f"Inside get_final_outputs: config['skip_drugz'] = {config.get('skip_drugz')}")
     print(f"Target experiments: {TARGET_EXPERIMENTS}") # DEBUG
 
     # Use wildcards.experiment if rule all defines experiment, otherwise iterate
@@ -1607,6 +1611,8 @@ def get_final_outputs(wildcards):
                 print("    Skipping RRA (skip_rra=True)") # DEBUG
 
             # Add DrugZ results if not skipped
+            # ADD DEBUG PRINT for skip_drugz specifically before the check
+            print(f"  Checking DrugZ for {contrast}: skip_drugz is {config.get('skip_drugz', False)}")
             if not config.get("skip_drugz", False):
                 # DEPEND ON CONVERTED CSV
                 dz_file = OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
