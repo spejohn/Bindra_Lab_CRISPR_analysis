@@ -568,6 +568,8 @@ rule run_mageck_count_per_sample:
         fastq_dir_host=lambda wc, input: str(Path(str(input.r1)).parent),
         library_dir_host=lambda wc, input: str(Path(str(input.library)).parent),
         output_dir_host=lambda wc, output: str(Path(str(output.count_txt)).parent),
+        # Calculate absolute output prefix string in params
+        output_prefix_abs=lambda wc, output: str(Path(output.count_txt).with_suffix('')), 
         # Mageck options from config
         count_options_str=lambda wc: format_options(config.get("mageck_count_options", {})),
     log:
@@ -590,7 +592,7 @@ rule run_mageck_count_per_sample:
             # $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
             --list-seq {input.library} \
             --sample-label {wildcards.sample} \
-            --output-prefix {Path(output.count_txt).with_suffix('')} \
+            --output-prefix {params.output_prefix_abs} \
             {params.count_options_str} \
             > {log} 2>&1
         """
@@ -861,6 +863,8 @@ rule run_mageck_mle_per_experiment:
         # output_prefix=lambda wc, output: str(
         #     Path(output.gene_summary).parent / f"{wc.experiment}_MLE"
         # ),
+        # Calculate absolute output prefix string in params
+        output_prefix_abs=lambda wc, output: str(Path(output.gene_summary).with_suffix('')), 
         # Format analysis options from config
         analysis_options_str=lambda wc: format_options(config.get("mageck_mle_options", {})),
     log:
@@ -877,7 +881,7 @@ rule run_mageck_mle_per_experiment:
         mageck mle \
             -k {input.count_file} \
             -d {input.design_matrix} \
-            -n {Path(output.gene_summary).with_suffix('')} \
+            -n {params.output_prefix_abs} \
             {params.analysis_options_str} \
             > {log} 2>&1
         """
