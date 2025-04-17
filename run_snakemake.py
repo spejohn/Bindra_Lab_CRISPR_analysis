@@ -173,9 +173,8 @@ def run_snakemake(args):
         cmd_parts.append("--use-apptainer")
         # Explicitly bind the parent directory containing input/output to ensure write access
         parent_dir = Path(args.base_dir).resolve().parent
-        # Split the arg string for Popen if necessary, or handle quoting carefully
-        # For simplicity here, adding as separate parts might be safer depending on shell interpretation
-        cmd_parts.extend(["--apptainer-args", f"'--bind {parent_dir}:{parent_dir}'"])
+        # Pass the full flag and value, ensuring no extra quotes are added by the list extend
+        cmd_parts.extend(["--apptainer-args", f"--bind {parent_dir}:{parent_dir}"]) 
         logging.info(f"Adding explicit Apptainer bind: {parent_dir}")
     elif args.use_docker:
         cmd_parts.append("--use-docker")
