@@ -587,7 +587,7 @@ rule run_mageck_count_per_sample:
         mkdir -p $(dirname {log}) && \
         mageck count \
             --fastq {input.r1} \
-            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
+            # $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
             --list-seq {input.library} \
             --sample-label {wildcards.sample} \
             --output-prefix ./{wildcards.sample} \
