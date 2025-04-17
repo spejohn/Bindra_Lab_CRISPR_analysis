@@ -586,14 +586,14 @@ rule run_mageck_count_per_sample:
         #       in the mounted host output directory (params.output_dir_host).
         #       The --output-prefix uses a relative path within that directory.
         r"""
-        mkdir -p $(dirname {log}) && \
-        mageck count \
-            --fastq {input.r1} \
-            # $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \
-            --list-seq {input.library} \
-            --sample-label {wildcards.sample} \
-            --output-prefix {params.output_prefix_abs} \
-            {params.count_options_str} \
+        mkdir -p $(dirname {log}) && \\
+        mageck count \\
+            --fastq {input.r1} \\
+            $(test -n "{input.r2}" && echo "--fastq-2 {input.r2}") \\
+            --list-seq {input.library} \\
+            --sample-label {wildcards.sample} \\
+            --output-prefix {params.output_prefix_abs} \\
+            {params.count_options_str} \\
             > {log} 2>&1
         """
 
@@ -606,7 +606,7 @@ rule aggregate_count_summaries:
             OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.countsummary.txt",
             experiment=wc.experiment,
             sample=get_fastq_basenames(wc.experiment),
-        ),
+        ) # Remove trailing comma
     output:
         # Aggregated output stays within the mageck_count_outputs directory
         agg_summary=OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{experiment}_aggregated.countsummary.txt",
