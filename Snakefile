@@ -1269,7 +1269,8 @@ rule plot_roc_curve:
         mageck_results=OUTPUT_DIR
         / "{experiment}"
         / "{contrast}_gMGK.csv",
-        known_controls=lambda wc: BASE_DIR / wc.experiment / "known_controls.csv",
+        # REMOVED: known_controls is now checked in run block
+        # known_controls=lambda wc: BASE_DIR / wc.experiment / "known_controls.csv",
     output:
         html_plot=OUTPUT_DIR
         / "{experiment}"
@@ -1278,7 +1279,10 @@ rule plot_roc_curve:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "plot_roc_{contrast}.log",
     run:
-        # Removed skip check - Handled by rule all's conditional input
+        # Define path to optional known controls file
+        known_controls_path = BASE_DIR / wildcards.experiment / "known_controls.csv"
+
+        # Check for required MAGeCK results input
         if (
             not Path(input.mageck_results).exists()
             or Path(input.mageck_results).stat().st_size == 0
@@ -1290,14 +1294,19 @@ rule plot_roc_curve:
                 f.write(error_msg)
             raise FileNotFoundError(error_msg)
 
-        if not Path(input.known_controls).exists():
+        # Check for optional known controls file *within* the run block
+        if not known_controls_path.exists():
             # Log skip and exit cleanly (optional input)
-            warn_msg = f"Known controls file {input.known_controls} not found. Skipping ROC plot for {wildcards.experiment}/{wildcards.contrast}."
+            warn_msg = f"Known controls file {known_controls_path} not found. Skipping ROC plot for {wildcards.experiment}/{wildcards.contrast}."
             print(f"[{datetime.now()}] WARNING {wildcards.experiment}/{wildcards.contrast}: {warn_msg}")
             with open(str(log), "w") as f:
                 f.write(warn_msg)
-            sys.exit(0)
+            # REMOVED: Create a dummy output file to satisfy Snakemake if skipped
+            # Path(output.html_plot).parent.mkdir(parents=True, exist_ok=True)
+            # Path(output.html_plot).touch()
+            sys.exit(0) # Exit successfully without creating output
 
+        # Proceed with plotting if controls file exists
         print(
             f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Plotting ROC curve (PLACEHOLDER)..."
         )
@@ -1306,14 +1315,21 @@ rule plot_roc_curve:
             print(
                 "--> Placeholder rule: plot_roc_curve() function would be called here."
             )
-            # Placeholder: Just log completion, no touch needed
+            # Placeholder: Just log completion, no touch needed (dummy file created above if skipped)
+            # If plotting were implemented, it would overwrite the dummy file here.
+            # For now, just log completion, actual plot generation is placeholder.
             print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: ROC curve plot logged completion (placeholder): {output.html_plot}")
+            # Ensure output file exists even for placeholder logic
+            Path(output.html_plot).touch()
+
 
         except NameError:
             error_msg = "ERROR: plot_roc_curve function not found/imported (placeholder assumes it exists)."
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
+            # Raise error if function is expected but missing
+            raise
         except Exception as e:
             error_msg = f"Error plotting ROC curve for {wildcards.experiment}/{wildcards.contrast}: {e}"
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
@@ -1537,15 +1553,17 @@ def get_final_outputs(wildcards):
 
             # Per-contrast QC plots (ROC needs controls check)
             if "plot_roc_curve" in globals():
-                known_controls_path = BASE_DIR / experiment / "known_controls.csv"
-                print(f"  ROC Check: known_controls_exists={known_controls_path.exists()} ({known_controls_path})") # DEBUG
-                if known_controls_path.exists(): # Only add ROC if controls file exists
+                 known_controls_path = BASE_DIR / experiment / "known_controls.csv"
+                 print(f"  ROC Check: known_controls_exists={known_controls_path.exists()} ({known_controls_path})") # DEBUG
+                 if known_controls_path.exists(): # Only *require* ROC if controls file exists
                     for contrast in contrasts:
+                        # This plot is now generated conditionally by the rule itself,
+                        # but we still need it as a target for rule all if controls exist.
                         roc_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_{contrast}_roc.html"
-                        print(f"    Adding QC target: {roc_plot}") # DEBUG
+                        print(f"    Adding QC target (since controls exist): {roc_plot}") # DEBUG
                         final_files.append(roc_plot)
-                else:
-                    print("    Skipping ROC plots (no known_controls.csv)") # DEBUG
+                 else:
+                     print("    Skipping adding ROC plots to final targets (no known_controls.csv)") # DEBUG
             else:
                  print("    Skipping ROC plots (rule not defined)") # DEBUG
 
