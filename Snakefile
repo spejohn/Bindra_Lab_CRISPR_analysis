@@ -842,8 +842,8 @@ rule run_mageck_rra_per_contrast:
         mkdir -p $(dirname {log}) && \
         mageck test \
             -k {input.count_file} \
-            -t {params.treatment_samplesq} \
-            -c {params.control_samplesq} \
+            -t {params.treatment_samples} \
+            -c {params.control_samples} \
             -n {params.output_prefix_abs} \
             {params.analysis_options_str} \
             > {log} 2>&1
