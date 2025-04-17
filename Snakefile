@@ -593,7 +593,6 @@ rule run_mageck_count_per_sample:
             --list-seq {input.library} \
             --sample-label {wildcards.sample} \
             --output-prefix {params.output_prefix_abs} \
-            {params.count_options_str} \
             > {log} 2>&1
         """
 
