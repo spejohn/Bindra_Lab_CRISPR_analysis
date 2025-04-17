@@ -15,6 +15,16 @@ from pathlib import Path
 import shlex # Import shlex for safer command splitting
 import datetime # Import datetime for timestamps
 
+# --- Define Snakefile Defaults ---
+# These should match the config.setdefault values in Snakefile
+SNAKEFILE_DEFAULTS = {
+    "skip_qc": False,
+    "skip_rra": False,
+    "skip_mle": False,
+    "skip_drugz": False,
+}
+# --- End Snakefile Defaults ---
+
 def setup_logging():
     """Configure basic logging for the script to console and file."""
     log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
@@ -99,6 +109,7 @@ def parse_args():
     parser.add_argument("--skip-drugz", action="store_true", help="Skip DrugZ analysis")
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
+    parser.add_argument("--skip-rra", action="store_true", help="Skip MAGeCK RRA analysis") # Add skip_rra
     
     # Add argument to capture target files/rules
     parser.add_argument('targets', nargs='*', default=[], # Capture zero or more positional args
@@ -146,11 +157,24 @@ def run_snakemake(args):
         "--config", # Start config definitions
         f"base_dir={args.base_dir}", # Pass base_dir
         f"output_dir={output_dir}",
-        f"skip_drugz={str(args.skip_drugz).lower()}",
-        f"skip_qc={str(args.skip_qc).lower()}",
-        f"skip_mle={str(args.skip_mle).lower()}",
+        # REMOVED direct passing of skip flags here
+        # f"skip_drugz={str(args.skip_drugz).lower()}",
+        # f"skip_qc={str(args.skip_qc).lower()}",
+        # f"skip_mle={str(args.skip_mle).lower()}",
     ]
     
+    # --- Add Skip Flags Conditionally ---
+    # Only add the config flag if the argument value differs from the Snakefile default
+    if args.skip_qc != SNAKEFILE_DEFAULTS["skip_qc"]:
+        cmd_parts.append(f"skip_qc={str(args.skip_qc).lower()}")
+    if args.skip_rra != SNAKEFILE_DEFAULTS["skip_rra"]:
+        cmd_parts.append(f"skip_rra={str(args.skip_rra).lower()}")
+    if args.skip_mle != SNAKEFILE_DEFAULTS["skip_mle"]:
+        cmd_parts.append(f"skip_mle={str(args.skip_mle).lower()}")
+    if args.skip_drugz != SNAKEFILE_DEFAULTS["skip_drugz"]:
+        cmd_parts.append(f"skip_drugz={str(args.skip_drugz).lower()}")
+    # --- End Conditional Skip Flags ---
+
     # Add target experiments if specified - use target_screens key for Snakefile
     if args.target_experiments:
         # Format as a Python list string for Snakemake config

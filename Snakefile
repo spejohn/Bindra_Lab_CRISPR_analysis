@@ -980,57 +980,21 @@ rule convert_rra_results:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_rra_{contrast}.log",
     run:
-        if config.get("skip_rra", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping RRA result conversion for {wildcards.contrast} due to skip_rra flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.csv_summary)
-            sys.exit(0)
-
-        if (
-            not Path(input.rra_summary).exists()
-            or Path(input.rra_summary).stat().st_size == 0
-        ):
-            # Log error and raise (input is required for conversion)
-            error_msg = f"Input RRA summary {input.rra_summary} not found or empty. Cannot convert."
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.csv_summary)
-            # sys.exit(0)
-            raise FileNotFoundError(error_msg)
-
-        print(
-            f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Converting MAGeCK RRA results..."
-        )
+        # Removed skip check - Handled by rule all's conditional input
+        # If not skipped, proceed with conversion
         try:
-            Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
-            convert_results_to_csv(
-                # Use result_file instead of input_path
-                result_file=str(input.rra_summary),
-                output_csv_path=str(output.csv_summary),
-                analysis_type="rra",
+            convert_mageck_results(
+                input_path=input.rra_gene_summary,
+                output_path=output.csv_summary,
+                method="RRA"
             )
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: RRA results converted to CSV: {output.csv_summary}")
-        except NameError:
-            # Log error and raise
-            error_msg = (
-                "ERROR: convert_results_to_csv function not found/imported."
-            )
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise
+            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Converted RRA results.")
         except Exception as e:
-            # Log error and raise
             error_msg = f"Error converting RRA results for {wildcards.contrast}: {e}"
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.csv_summary)
-            raise e
+            print(f"[{datetime.now()}] ERROR: {wildcards.experiment}/{wildcards.contrast}: {error_msg}", file=sys.stderr)
+            with open(log.o, "a") as f:
+                f.write(f"[{datetime.now()}] ERROR: {error_msg}\n")
+            sys.exit(1)
 
 
 # --- Rule to Convert MAGeCK MLE Results to CSV (Conditional) ---
@@ -1045,67 +1009,21 @@ rule convert_mle_results:
         # Log is per experiment
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_mle_{experiment}.log",
     run:
-        if config.get("skip_mle", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping MLE result conversion for {wildcards.experiment} due to skip_mle flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.csv_summary)
-            sys.exit(0)
-
-        design_matrix_path = OUTPUT_DIR / wildcards.experiment / "design_matrix.txt"
-        if not design_matrix_path.exists() or design_matrix_path.stat().st_size == 0:
-            # Log skip and exit cleanly (matches skip condition in run_mle rule)
-            info_msg = f"Skipping MLE result conversion for {wildcards.experiment}: Design matrix was missing or empty."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.csv_summary)
-            sys.exit(0)
-
-        if (
-            not Path(input.mle_summary).exists()
-            or Path(input.mle_summary).stat().st_size == 0
-        ):
-            # Log error and raise (input is required for conversion)
-            error_msg = f"Input MLE summary {input.mle_summary} not found or empty. Cannot convert."
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.csv_summary)
-            # sys.exit(0)
-            raise FileNotFoundError(error_msg)
-
-        print(
-            f"[{datetime.now()}] {wildcards.experiment}: Converting MAGeCK MLE results..."
-        )
+        # Removed skip check - Handled by rule all's conditional input
+        # If not skipped, proceed with conversion
         try:
-            Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
-            # Ensure this function exists and handles the input/output format
-            convert_results_to_csv(
-                result_file=str(input.mle_summary),
-                output_csv_path=str(output.csv_summary),
-                analysis_type="mle",
+            convert_mageck_results(
+                input_path=input.mle_gene_summary,
+                output_path=output.csv_summary,
+                method="MLE"
             )
-            print(f"[{datetime.now()}] {wildcards.experiment}: MLE results converted to CSV: {output.csv_summary}")
-        except NameError:
-            # Log error and raise
-            error_msg = (
-                "ERROR: convert_results_to_csv function not found/imported."
-            )
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            raise
+            print(f"[{datetime.now()}] {wildcards.experiment}: Converted MLE results.")
         except Exception as e:
-            # Log error and raise
             error_msg = f"Error converting MLE results for {wildcards.experiment}: {e}"
-            print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
-            with open(str(log), "w") as f:
-                f.write(error_msg)
-            # touch(output.csv_summary)
-            raise e
+            print(f"[{datetime.now()}] ERROR: {wildcards.experiment}: {error_msg}", file=sys.stderr)
+            with open(log.o, "a") as f:
+                f.write(f"[{datetime.now()}] ERROR: {error_msg}\n")
+            sys.exit(1)
 
 
 # --- Rule to Convert DrugZ Results to CSV (Conditional) ---
@@ -1122,15 +1040,7 @@ rule convert_drugz_results:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_drugz_{contrast}.log",
     run:
-        if config.get("skip_drugz", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping DrugZ result conversion for {wildcards.contrast} due to skip_drugz flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.csv_summary)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         if (
             not Path(input.drugz_summary).exists()
             or Path(input.drugz_summary).stat().st_size == 0
@@ -1140,8 +1050,7 @@ rule convert_drugz_results:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.csv_summary)
-            # sys.exit(0)
+            # sys.exit(0) # Removed redundant exit
             raise FileNotFoundError(error_msg)
 
         print(
@@ -1171,7 +1080,6 @@ rule convert_drugz_results:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.csv_summary)
             raise e
 
 
@@ -1190,15 +1098,7 @@ rule plot_sgrna_distribution:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "plot_sgrna_distribution.log",
     run:
-        if config.get("skip_qc", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping sgRNA distribution plot for {wildcards.experiment} due to skip_qc flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.html_plot)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         if (
             not Path(input.count_file).exists()
             or Path(input.count_file).stat().st_size == 0
@@ -1208,8 +1108,6 @@ rule plot_sgrna_distribution:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
-            # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
         print(f"[{datetime.now()}] {wildcards.experiment}: Plotting sgRNA distribution...")
@@ -1244,7 +1142,6 @@ rule plot_sgrna_distribution:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
             raise e
 
 
@@ -1260,15 +1157,7 @@ rule plot_gene_distribution:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "plot_gene_distribution.log",
     run:
-        if config.get("skip_qc", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping gene distribution plot for {wildcards.experiment} due to skip_qc flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.html_plot)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         if (
             not Path(input.count_file).exists()
             or Path(input.count_file).stat().st_size == 0
@@ -1278,8 +1167,6 @@ rule plot_gene_distribution:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
-            # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
         print(f"[{datetime.now()}] {wildcards.experiment}: Plotting gene distribution...")
@@ -1314,7 +1201,6 @@ rule plot_gene_distribution:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
             raise e
 
 
@@ -1327,15 +1213,7 @@ rule plot_gini_index:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "plot_gini_index.log",
     run:
-        if config.get("skip_qc", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping Gini index plot for {wildcards.experiment} due to skip_qc flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.html_plot)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         if (
             not Path(input.count_file).exists()
             or Path(input.count_file).stat().st_size == 0
@@ -1345,8 +1223,6 @@ rule plot_gini_index:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
-            # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
         print(f"[{datetime.now()}] {wildcards.experiment}: Plotting Gini index...")
@@ -1379,7 +1255,6 @@ rule plot_gini_index:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
             raise e
 
 
@@ -1399,15 +1274,7 @@ rule plot_roc_curve:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "plot_roc_{contrast}.log",
     run:
-        if config.get("skip_qc", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping ROC curve plot for {wildcards.experiment}/{wildcards.contrast} due to skip_qc flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.html_plot)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         if (
             not Path(input.mageck_results).exists()
             or Path(input.mageck_results).stat().st_size == 0
@@ -1417,8 +1284,6 @@ rule plot_roc_curve:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
-            # sys.exit(0)
             raise FileNotFoundError(error_msg)
 
         if not Path(input.known_controls).exists():
@@ -1427,7 +1292,6 @@ rule plot_roc_curve:
             print(f"[{datetime.now()}] WARNING {wildcards.experiment}/{wildcards.contrast}: {warn_msg}")
             with open(str(log), "w") as f:
                 f.write(warn_msg)
-            # touch(output.html_plot)
             sys.exit(0)
 
         print(
@@ -1439,7 +1303,6 @@ rule plot_roc_curve:
                 "--> Placeholder rule: plot_roc_curve() function would be called here."
             )
             # Placeholder: Just log completion, no touch needed
-            # touch(output.html_plot)
             print(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: ROC curve plot logged completion (placeholder): {output.html_plot}")
 
         except NameError:
@@ -1447,14 +1310,11 @@ rule plot_roc_curve:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # No touch needed for placeholder
-            # touch(output.html_plot)
         except Exception as e:
             error_msg = f"Error plotting ROC curve for {wildcards.experiment}/{wildcards.contrast}: {e}"
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}/{wildcards.contrast}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.html_plot)
             raise e
 
 
@@ -1490,15 +1350,7 @@ rule generate_qc_report:
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "generate_qc_report.log",
     run:
-        if config.get("skip_qc", False):
-            # Log skip and exit cleanly
-            info_msg = f"Skipping QC report generation for {wildcards.experiment} due to skip_qc flag."
-            print(f"[{datetime.now()}] {wildcards.experiment}: {info_msg}")
-            with open(str(log), "w") as f:
-                f.write(info_msg)
-            # touch(output.report)
-            sys.exit(0)
-
+        # Removed skip check - Handled by rule all's conditional input
         print(f"[{datetime.now()}] {wildcards.experiment}: Generating QC report (PLACEHOLDER)...")
         try:
             Path(output.report).parent.mkdir(parents=True, exist_ok=True)
@@ -1521,7 +1373,6 @@ rule generate_qc_report:
             )
             print(input_files_dict)
             # Placeholder: Log completion, no touch needed
-            # touch(output.report)
             print(f"[{datetime.now()}] {wildcards.experiment}: QC report logged completion (placeholder): {output.report}")
 
         except NameError:
@@ -1529,14 +1380,11 @@ rule generate_qc_report:
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # No touch needed
-            # touch(output.report)
         except Exception as e:
             error_msg = f"Error generating QC report for {wildcards.experiment}: {e}"
             print(f"[{datetime.now()}] ERROR {wildcards.experiment}: {error_msg}")
             with open(str(log), "w") as f:
                 f.write(error_msg)
-            # touch(output.report)
             raise e
 
 
@@ -1613,16 +1461,13 @@ def get_final_outputs(wildcards):
                 print("    Skipping RRA (skip_rra=True)") # DEBUG
 
             # Add DrugZ results if not skipped
-            # REMOVED DEBUG PRINT
-            # print(f"  Checking DrugZ for {contrast}: skip_drugz is {config.get('skip_drugz', False)}")
+            # Revert check to simple boolean
             if not config.get("skip_drugz", False):
                 # DEPEND ON CONVERTED CSV
                 dz_file = OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
                 print(f"    Adding DrugZ target: {dz_file}") # DEBUG
-                # *** ADD MISSING APPEND ***
                 final_files.append(dz_file)
             else:
-                # *** CORRECTED PRINT LOCATION ***
                 print(f"    Skipping DrugZ for {contrast} (skip_drugz=True)") # DEBUG
 
         # Add MLE results (per experiment) if not skipped AND design matrix exists
@@ -1651,6 +1496,7 @@ def get_final_outputs(wildcards):
 
         # --- 2. QC Files (Conditional) ---
         print(f"Checking QC files for {experiment}...") # DEBUG
+        # Revert check to simple boolean
         if not config.get("skip_qc", False):
             # Per-experiment QC plots (ensure rules still exist)
             if "plot_sgrna_distribution" in globals(): # Check if rule exists
