@@ -796,26 +796,22 @@ def parse_contrast_samples_from_txt(contrast_txt_path: str, contrast_name: str, 
 rule run_mageck_rra_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Depend on the static contrast file name
         contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
-        sif=MAGECK_SIF, # Depend on the specific SIF file
+        sif=MAGECK_SIF,
     output:
+        # Simplified output path - no contrast subdirectory here
         gene_summary=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "analysis_results"
         / "{contrast}_RRA.gene_summary.txt",
         sgrna_summary=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "analysis_results"
         / "{contrast}_RRA.sgrna_summary.txt",
     params:
-        # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(
             {**{"norm-method": config.get("mageck_norm_method", "median")},
              **config.get("mageck_rra_options", {})}),
-        # NEW: Get treatment/control samples by parsing the input TXT
         treatment_samples=lambda wc, input: parse_contrast_samples_from_txt(
             contrast_txt_path=str(input.contrasts_txt),
             contrast_name=wc.contrast,
@@ -826,7 +822,7 @@ rule run_mageck_rra_per_contrast:
             contrast_name=wc.contrast,
             sample_type='control'
         ),
-        # Output prefix (absolute path, without extension) - Construct using contrast wildcard
+        # Updated output prefix to match simplified path
         output_prefix_abs=lambda wc, output: str(
             Path(output.gene_summary).parent / f"{wc.contrast}_RRA"
         ),
@@ -834,14 +830,12 @@ rule run_mageck_rra_per_contrast:
         OUTPUT_DIR / "{experiment}" / "logs" / "mageck_rra_{contrast}.log",
     threads: 1
     container:
-        # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
     shell:
-        # Ensure log directory exists, then run mageck test
-        # Use shlex.quote for sample lists as they might contain commas
-        # Note: No trailing backslash needed on the last line before > {log}
+        # Command remains the same, uses updated params.output_prefix_abs
         """
         mkdir -p $(dirname {log}) && \
+        mkdir -p $(dirname {output.gene_summary}) && \
         mageck test \
             -k {input.count_file} \
             -t {params.treatment_samples} \
@@ -897,25 +891,20 @@ rule run_mageck_mle_per_experiment:
 rule run_drugz_per_contrast:
     input:
         count_file=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
-        # Depend on the static contrast file name
         contrasts_txt=OUTPUT_DIR / "{experiment}" / "contrasts.txt",
-        sif=DRUGZ_SIF, # Depend on the specific SIF file
+        sif=DRUGZ_SIF,
     output:
+        # Simplified output path - no contrast subdirectory here
         drugz_results=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "analysis_results"
         / "{contrast}_DrugZ.txt",
     params:
-        # Define output path relative to container working directory
-        # output_path=lambda wc, output: output.drugz_results,
-        # Format analysis options from config - keep this part
         analysis_options_str=lambda wc: format_options(config.get("drugz_options", {})),
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "drugz_{contrast}.log",
     threads: 1
     container:
-        # Directly reference the SIF path variable, converted to string
         str(DRUGZ_SIF)
     run:
         # Imports needed within the run block scope
@@ -954,6 +943,7 @@ rule run_drugz_per_contrast:
         output_filename_abs = str(output.drugz_results)
         command = f"""
         mkdir -p $(dirname {log}) && \
+        mkdir -p $(dirname {output.drugz_results}) && \
         python /drugz/drugz.py \
             --input {input.count_file} \
             --output "{output_filename_abs}" \
@@ -969,13 +959,12 @@ rule run_drugz_per_contrast:
 # --- Rule to Convert MAGeCK RRA Results to CSV ---
 rule convert_rra_results:
     input:
+        # Updated input path to match run_mageck_rra_per_contrast output
         rra_summary=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "analysis_results"
         / "{contrast}_RRA.gene_summary.txt",
     output:
-        # Place converted file directly under experiment dir
         csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}_gMGK.csv",
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_rra_{contrast}.log",
@@ -1000,8 +989,8 @@ rule convert_rra_results:
 # --- Rule to Convert MAGeCK MLE Results to CSV (Conditional) ---
 rule convert_mle_results:
     input:
-        # Input is the experiment-level MLE summary
-        mle_summary=OUTPUT_DIR / "{experiment}" / "MLE_analysis_results" / "{experiment}_MLE.gene_summary.txt", # Updated input path
+        # Update input path to match run_mageck_mle_per_experiment output directory
+        mle_summary=OUTPUT_DIR / "{experiment}" / "analysis_results" / "{experiment}_MLE.gene_summary.txt",
     output:
         # Place converted file directly under experiment dir
         csv_summary=OUTPUT_DIR / "{experiment}" / "{experiment}_gMLE.csv",
@@ -1012,16 +1001,17 @@ rule convert_mle_results:
         # Removed skip check - Handled by rule all's conditional input
         # If not skipped, proceed with conversion
         try:
-            convert_mageck_results(
-                input_path=input.mle_gene_summary,
-                output_path=output.csv_summary,
-                method="MLE"
+            # Correct the input variable access here as well
+            convert_results_to_csv(
+                result_file=str(input.mle_summary), # Use result_file arg
+                output_csv_path=str(output.csv_summary), # Use output_csv_path arg
+                analysis_type="MLE" # Specify analysis type
             )
             print(f"[{datetime.now()}] {wildcards.experiment}: Converted MLE results.")
         except Exception as e:
             error_msg = f"Error converting MLE results for {wildcards.experiment}: {e}"
             print(f"[{datetime.now()}] ERROR: {wildcards.experiment}: {error_msg}", file=sys.stderr)
-            with open(log.o, "a") as f:
+            with open(log[0], "a") as f: # Assuming log is defined; might need str(log)
                 f.write(f"[{datetime.now()}] ERROR: {error_msg}\n")
             sys.exit(1)
 
@@ -1029,13 +1019,12 @@ rule convert_mle_results:
 # --- Rule to Convert DrugZ Results to CSV (Conditional) ---
 rule convert_drugz_results:
     input:
+        # Updated input path to match run_drugz_per_contrast output
         drugz_summary=OUTPUT_DIR
         / "{experiment}"
-        / "{contrast}"
         / "analysis_results"
         / "{contrast}_DrugZ.txt",
     output:
-        # Place converted file directly under experiment dir
         csv_summary=OUTPUT_DIR / "{experiment}" / "{contrast}_gDZ.csv",
     log:
         OUTPUT_DIR / "{experiment}" / "logs" / "convert_drugz_{contrast}.log",
