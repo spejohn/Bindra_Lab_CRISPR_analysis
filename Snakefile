@@ -1008,7 +1008,8 @@ rule convert_rra_results:
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
             convert_results_to_csv(
-                input_txt_path=str(input.rra_summary),
+                # Use result_file instead of input_path
+                result_file=str(input.rra_summary),
                 output_csv_path=str(output.csv_summary),
                 analysis_type="rra",
             )
@@ -1083,7 +1084,7 @@ rule convert_mle_results:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
             # Ensure this function exists and handles the input/output format
             convert_results_to_csv(
-                input_txt_path=str(input.mle_summary),
+                result_file=str(input.mle_summary),
                 output_csv_path=str(output.csv_summary),
                 analysis_type="mle",
             )
@@ -1149,7 +1150,8 @@ rule convert_drugz_results:
         try:
             Path(output.csv_summary).parent.mkdir(parents=True, exist_ok=True)
             convert_results_to_csv(
-                input_txt_path=str(input.drugz_summary),
+                # Use result_file instead of input_path
+                result_file=str(input.drugz_summary),
                 output_csv_path=str(output.csv_summary),
                 analysis_type="drugz",
             )
@@ -1545,8 +1547,8 @@ def get_final_outputs(wildcards):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
     print("--- Entering get_final_outputs ---") # DEBUG
-    # ADD DEBUG PRINT for skip_drugz config value
-    print(f"Inside get_final_outputs: config['skip_drugz'] = {config.get('skip_drugz')}")
+    # REMOVED DEBUG PRINT
+    # print(f"Inside get_final_outputs: config['skip_drugz'] = {config.get('skip_drugz')}")
     print(f"Target experiments: {TARGET_EXPERIMENTS}") # DEBUG
 
     # Use wildcards.experiment if rule all defines experiment, otherwise iterate
@@ -1611,15 +1613,17 @@ def get_final_outputs(wildcards):
                 print("    Skipping RRA (skip_rra=True)") # DEBUG
 
             # Add DrugZ results if not skipped
-            # ADD DEBUG PRINT for skip_drugz specifically before the check
-            print(f"  Checking DrugZ for {contrast}: skip_drugz is {config.get('skip_drugz', False)}")
+            # REMOVED DEBUG PRINT
+            # print(f"  Checking DrugZ for {contrast}: skip_drugz is {config.get('skip_drugz', False)}")
             if not config.get("skip_drugz", False):
                 # DEPEND ON CONVERTED CSV
                 dz_file = OUTPUT_DIR / experiment / f"{contrast}_gDZ.csv"
                 print(f"    Adding DrugZ target: {dz_file}") # DEBUG
+                # *** ADD MISSING APPEND ***
                 final_files.append(dz_file)
             else:
-                 print("    Skipping DrugZ (skip_drugz=True)") # DEBUG
+                # *** CORRECTED PRINT LOCATION ***
+                print(f"    Skipping DrugZ for {contrast} (skip_drugz=True)") # DEBUG
 
         # Add MLE results (per experiment) if not skipped AND design matrix exists
         print(f"Checking MLE results for {experiment}...") # DEBUG
