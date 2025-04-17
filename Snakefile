@@ -568,8 +568,8 @@ rule run_mageck_count_per_sample:
         fastq_dir_host=lambda wc, input: str(Path(str(input.r1)).parent),
         library_dir_host=lambda wc, input: str(Path(str(input.library)).parent),
         output_dir_host=lambda wc, output: str(Path(str(output.count_txt)).parent),
-        # Calculate absolute output prefix string in params
-        output_prefix_abs=lambda wc, output: str(Path(output.count_txt).with_suffix('')), 
+        # Calculate absolute output prefix string in params - Construct from output dir and sample wildcard
+        output_prefix_abs=lambda wc, output: str(Path(output.count_txt).parent / wc.sample),
         # Mageck options from config
         count_options_str=lambda wc: format_options(config.get("mageck_count_options", {})),
     log:
