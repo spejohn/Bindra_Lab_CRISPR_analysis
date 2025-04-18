@@ -641,9 +641,22 @@ def convert_results_to_csv(
         # Read the tab-delimited file, skipping potential comment lines
         df = pd.read_csv(result_file, sep='\t', comment='#')
         
-        # Basic validation: Check if the expected key column exists
-        if required_col not in df.columns:
-             raise ValueError(f"Required column '{required_col}' not found in {result_file}. Found: {df.columns.tolist()}")
+        # --- Case-insensitive column check --- 
+        # Store original column names for potential use
+        original_columns = df.columns.tolist()
+        # Create lower-case versions for checking
+        df_cols_lower = [c.lower() for c in original_columns]
+        required_col_lower = required_col.lower()
+        
+        # Check if the lower-case required column exists
+        if required_col_lower not in df_cols_lower:
+             # Provide a more informative error message
+             raise ValueError(f"Required key column '{required_col}' (case-insensitive) not found in {result_file}. Found columns: {original_columns}")
+        
+        # Find the actual column name matching the required one (case-insensitive)
+        # This is useful if we need to rename it later, though not strictly necessary for just saving
+        actual_col_name = next((col for col in original_columns if col.lower() == required_col_lower), required_col)
+        # --- End case-insensitive check --- 
 
         # Select all columns (as per user request - no specific selection/renaming)
         # df_to_save = df[relevant_columns] 

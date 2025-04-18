@@ -1029,10 +1029,10 @@ rule convert_rra_results:
         # Removed skip check - Handled by rule all's conditional input
         # If not skipped, proceed with conversion
         try:
-            convert_mageck_results(
-                input_path=input.rra_gene_summary,
-                output_path=output.csv_summary,
-                method="RRA"
+            convert_results_to_csv(
+                result_file=str(input.rra_summary),
+                output_csv_path=str(output.csv_summary),
+                analysis_type="RRA"
             )
             logging.info(f"[{datetime.now()}] {wildcards.experiment}/{wildcards.contrast}: Converted RRA results.") # Use info level
         except Exception as e:
