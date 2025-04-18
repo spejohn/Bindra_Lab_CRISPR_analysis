@@ -992,7 +992,7 @@ rule run_drugz_per_contrast:
         # Snakemake will execute this in the mounted output directory
         # Use the absolute path for the output file
         output_filename_abs = str(output.drugz_results)
-        command = f"""
+        command = textwrap.dedent(f""" \
         mkdir -p $(dirname {log}) && \
         mkdir -p $(dirname {output.drugz_results}) && \
         python /drugz/drugz.py \
@@ -1002,7 +1002,7 @@ rule run_drugz_per_contrast:
             --treatment-id {shlex.quote(treatment_samples)} \
             {params.analysis_options_str} \
             > {log} 2>&1
-        """
+        """).strip()
         # Execute the command
         shell(command)
 
