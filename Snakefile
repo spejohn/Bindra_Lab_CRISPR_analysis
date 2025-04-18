@@ -568,8 +568,8 @@ rule run_fastqc_per_sample:
     container:
         # Directly reference the SIF path variable, converted to string
         str(FASTQC_SIF)
-        # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
-        #       and runs the shell command in the mounted output directory.
+    # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
+    #       and runs the shell command in the mounted output directory.
     shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         fastqc \
@@ -614,10 +614,10 @@ rule run_mageck_count_per_sample:
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-        # Note: Snakemake automatically translates paths and runs the shell command
-        #       in the mounted host output directory (params.output_dir_host).
-        #       The --output-prefix uses a relative path within that directory.
-        #       Removed the conditional check for R2 input.
+    # Note: Snakemake automatically translates paths and runs the shell command
+    #       in the mounted host output directory (params.output_dir_host).
+    #       The --output-prefix uses a relative path within that directory.
+    #       Removed the conditional check for R2 input.
     shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         mageck count \
@@ -924,9 +924,8 @@ rule run_mageck_mle_per_experiment:
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-
-        # Snakemake ensures the output directory exists and mounts it.
-        # Run mageck mle using a relative output prefix.
+    # Snakemake ensures the output directory exists and mounts it.
+    # Run mageck mle using a relative output prefix.
     shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         mageck mle \
