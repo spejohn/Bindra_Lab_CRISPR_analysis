@@ -21,6 +21,7 @@ import shlex  # Added for shlex.quote
 from datetime import datetime # Import datetime
 import logging  # Added for logging
 import coloredlogs # Optional: for colored logs
+import textwrap
 
 # --- Logging Setup ---
 # Configure basic logging
@@ -126,7 +127,7 @@ rule build_sif_files:
         mageck_uri=config["mageck_docker_uri"],
         drugz_uri=config["drugz_docker_uri"],
         sif_dir=SIF_DIR,
-    shell: r"""
+    shell: textwrap.dedent(r"""
         # Create the SIF directory
         mkdir -p {params.sif_dir}
         # Build each SIF file
@@ -137,7 +138,7 @@ rule build_sif_files:
         apptainer build --force {output.mageck} {params.mageck_uri} >> {log} 2>&1 && \
         echo 'Building DrugZ SIF...' >> {log}
         apptainer build --force {output.drugz} {params.drugz_uri} >> {log} 2>&1
-    """
+    """).strip()
 
 # --- Experiment Discovery & Filtering ---
 
@@ -567,17 +568,16 @@ rule run_fastqc_per_sample:
     container:
         # Directly reference the SIF path variable, converted to string
         str(FASTQC_SIF)
-    shell:
         # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
         #       and runs the shell command in the mounted output directory.
-        r"""
+    shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         fastqc \
             --threads {threads} \
             -o . \
             {input.fastq} \
             > {log} 2>&1
-        """
+        """).strip()
 
 
 # --- Rule to run MAGeCK count per sample (from FASTQ) ---
@@ -614,12 +614,11 @@ rule run_mageck_count_per_sample:
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-    shell:
         # Note: Snakemake automatically translates paths and runs the shell command
         #       in the mounted host output directory (params.output_dir_host).
         #       The --output-prefix uses a relative path within that directory.
         #       Removed the conditional check for R2 input.
-        r"""
+    shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         mageck count \
             --fastq {input.r1} \
@@ -627,7 +626,7 @@ rule run_mageck_count_per_sample:
             --sample-label {wildcards.sample} \
             --output-prefix {params.output_prefix_abs} \
             > {log} 2>&1
-        """
+        """).strip()
 
 
 # --- Rule to Aggregate MAGeCK Count Summaries (within mageck_count_outputs/) ---
@@ -890,17 +889,10 @@ rule run_mageck_rra_per_contrast:
             raise RuntimeError(error_msg) from e # Raise exception to stop the rule
 
         # Construct the command string
-        command = f"""
-        mkdir -p $(dirname {log}) && \
-        mkdir -p $(dirname {output.gene_summary}) && \
-        mageck test \
-            -k {input.count_file} \
-            -t {shlex.quote(treatment_samples)} \
-            -c {shlex.quote(control_samples)} \
-            -n {params.output_prefix_abs} \
-            {params.analysis_options_str} \
-            > {log} 2>&1
-        """
+        command = textwrap.dedent(f"""\
+        mkdir -p $(dirname {log}) && mkdir -p $(dirname {output.gene_summary}) && \
+        mageck test -k {input.count_file} -t {shlex.quote(treatment_samples)} -c {shlex.quote(control_samples)} -n {params.output_prefix_abs} {params.analysis_options_str} > {log} 2>&1
+        """).strip()
         # Execute the command
         shell(command)
 
@@ -932,10 +924,10 @@ rule run_mageck_mle_per_experiment:
     container:
         # Directly reference the SIF path variable, converted to string
         str(MAGECK_SIF)
-    shell:
+
         # Snakemake ensures the output directory exists and mounts it.
         # Run mageck mle using a relative output prefix.
-        r"""
+    shell: textwrap.dedent(r"""
         mkdir -p $(dirname {log}) && \
         mageck mle \
             -k {input.count_file} \
@@ -944,6 +936,7 @@ rule run_mageck_mle_per_experiment:
             {params.analysis_options_str} \
             > {log} 2>&1
         """
+    ).strip()
 
 
 # --- Rule to run DrugZ per contrast (Conditional) ---
