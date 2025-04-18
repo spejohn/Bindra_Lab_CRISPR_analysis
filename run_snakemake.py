@@ -109,6 +109,7 @@ def parse_args():
     parser.add_argument("--skip-qc", action="store_true", help="Skip QC analysis")
     parser.add_argument("--skip-mle", action="store_true", help="Skip MAGeCK MLE analysis")
     parser.add_argument("--skip-rra", action="store_true", help="Skip MAGeCK RRA analysis") # Add skip_rra
+    parser.add_argument("--drugz-paired", action="store_true", help="Run DrugZ in paired mode (default is unpaired)")
     
     # Add argument to capture target files/rules
     parser.add_argument('targets', nargs='*', default=[], # Capture zero or more positional args
@@ -169,6 +170,11 @@ def run_snakemake(args):
     if args.skip_drugz != SNAKEFILE_DEFAULTS["skip_drugz"]:
         cmd_parts.append(f"skip_drugz={str(args.skip_drugz).lower()}")
     # --- End Conditional Skip Flags ---
+
+    # --- Add DrugZ Unpaired Config (Default=True, Flag enables Paired) ---
+    if args.drugz_paired:
+        cmd_parts.append("drugz_unpaired=False") # Set to False only if --drugz-paired is used
+    # --- End DrugZ Unpaired Config ---
 
     # --- Add Log Level Config ---
     cmd_parts.append(f"log_level={args.log_level}")

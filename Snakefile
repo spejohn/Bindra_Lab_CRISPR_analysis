@@ -987,21 +987,25 @@ rule run_drugz_per_contrast:
             with open(str(log), "w") as f: f.write(error_msg)
             raise RuntimeError(error_msg) from e # Raise exception to stop the rule
 
-        # Construct the command string using a relative output filename
-        # Snakemake will execute this in the mounted output directory
         # Use the absolute path for the output file
         output_filename_abs = str(output.drugz_results)
-        command = f"""
+        # Get formatted options from the dictionary
+        options_str = format_options(config.get("drugz_options", {}))
+        # Add unpaired flag by default, unless explicitly set to False in config
+        unpaired_flag = "-unpaired" if config.get("drugz_unpaired", True) else ""
+
+        command = textwrap.dedent(f"""
         mkdir -p $(dirname {log}) && \
         mkdir -p $(dirname {output.drugz_results}) && \
         python /drugz/drugz.py \
-            --input {input.count_file} \
-            --output "{output_filename_abs}" \
-            --control-id {shlex.quote(control_samples)} \
-            --treatment-id {shlex.quote(treatment_samples)} \
-            {params.analysis_options_str} \
+            -i {input.count_file} \
+            -o "{output_filename_abs}" \
+            -c {shlex.quote(control_samples)} \
+            -x {shlex.quote(treatment_samples)} \
+            {options_str} \
+            {unpaired_flag} \
             > {log} 2>&1
-        """
+        """).strip()
         # Execute the command
         shell(command)
 
