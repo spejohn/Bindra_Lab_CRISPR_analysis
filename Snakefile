@@ -994,18 +994,21 @@ rule run_drugz_per_contrast:
         # Add unpaired flag by default, unless explicitly set to False in config
         unpaired_flag = "-unpaired" if config.get("drugz_unpaired", True) else ""
 
-        command = textwrap.dedent(f"""
-        mkdir -p $(dirname {log}) && \
-        mkdir -p $(dirname {output.drugz_results}) && \
-        python /drugz/drugz.py \
-            -i {input.count_file} \
-            -o "{output_filename_abs}" \
-            -c {shlex.quote(control_samples)} \
-            -x {shlex.quote(treatment_samples)} \
-            {options_str} \
-            {unpaired_flag} \
-            > {log} 2>&1
-        """).strip()
+        # Construct command string explicitly without relying on textwrap or implicit newlines
+        command = (
+            f"mkdir -p $(dirname {log}) && "
+            f"mkdir -p $(dirname {output.drugz_results}) && "
+            f"python /drugz/drugz.py "
+            f"-i {input.count_file} "
+            f"-o \"{output_filename_abs}\" "
+            f"-c {shlex.quote(control_samples)} "
+            f"-x {shlex.quote(treatment_samples)} "
+            f"{options_str} "
+            f"{unpaired_flag} "
+            f"> {log} 2>&1"
+        )
+        # Log the command for debugging
+        logging.debug(f"Executing DrugZ command: {command}")
         # Execute the command
         shell(command)
 
