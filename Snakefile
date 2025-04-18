@@ -127,7 +127,7 @@ rule build_sif_files:
         mageck_uri=config["mageck_docker_uri"],
         drugz_uri=config["drugz_docker_uri"],
         sif_dir=SIF_DIR,
-    shell: textwrap.dedent(r"""
+    shell: r"""
         # Create the SIF directory
         mkdir -p {params.sif_dir}
         # Build each SIF file
@@ -138,7 +138,7 @@ rule build_sif_files:
         apptainer build --force {output.mageck} {params.mageck_uri} >> {log} 2>&1 && \
         echo 'Building DrugZ SIF...' >> {log}
         apptainer build --force {output.drugz} {params.drugz_uri} >> {log} 2>&1
-    """).strip()
+    """
 
 # --- Experiment Discovery & Filtering ---
 
@@ -570,14 +570,14 @@ rule run_fastqc_per_sample:
         str(FASTQC_SIF)
     # Note: Snakemake automatically translates {input.*} and {output.*} paths for the container
     #       and runs the shell command in the mounted output directory.
-    shell: textwrap.dedent(r"""
+    shell: r"""
         mkdir -p $(dirname {log}) && \
         fastqc \
             --threads {threads} \
             -o . \
             {input.fastq} \
             > {log} 2>&1
-        """).strip()
+        """
 
 
 # --- Rule to run MAGeCK count per sample (from FASTQ) ---
@@ -618,7 +618,7 @@ rule run_mageck_count_per_sample:
     #       in the mounted host output directory (params.output_dir_host).
     #       The --output-prefix uses a relative path within that directory.
     #       Removed the conditional check for R2 input.
-    shell: textwrap.dedent(r"""
+    shell: r"""
         mkdir -p $(dirname {log}) && \
         mageck count \
             --fastq {input.r1} \
@@ -626,7 +626,7 @@ rule run_mageck_count_per_sample:
             --sample-label {wildcards.sample} \
             --output-prefix {params.output_prefix_abs} \
             > {log} 2>&1
-        """).strip()
+        """
 
 
 # --- Rule to Aggregate MAGeCK Count Summaries (within mageck_count_outputs/) ---
@@ -926,7 +926,7 @@ rule run_mageck_mle_per_experiment:
         str(MAGECK_SIF)
     # Snakemake ensures the output directory exists and mounts it.
     # Run mageck mle using a relative output prefix.
-    shell: textwrap.dedent(r"""
+    shell: r"""
         mkdir -p $(dirname {log}) && \
         mageck mle \
             -k {input.count_file} \
@@ -935,7 +935,6 @@ rule run_mageck_mle_per_experiment:
             {params.analysis_options_str} \
             > {log} 2>&1
         """
-    ).strip()
 
 
 # --- Rule to run DrugZ per contrast (Conditional) ---
