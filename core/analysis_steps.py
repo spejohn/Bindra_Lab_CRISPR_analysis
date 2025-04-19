@@ -672,154 +672,143 @@ if PLOTLY_AVAILABLE:
         count_path: str,
         output_html_path: str,
         log_transform: bool = True,
-        pseudocount: int = 1
+        pseudocount: int = 1,
+        opacity: float = 0.6 # Added for overlaid plots
     ) -> Tuple[bool, Optional[str]]:
         """
-        Generates an interactive histogram of sgRNA read count distribution.
+        Generates overlaid density histograms of sgRNA read count distributions per sample.
 
         Args:
             count_path: Path to the aggregated count file (tab-delimited).
-            output_html_path: Path to save the output HTML file.
-            log_transform: Whether to log10 transform counts (+ pseudocount) before plotting.
-            pseudocount: Pseudocount to add before log transformation.
+            output_html_path: Path to save the output HTML plot.
+            log_transform: Whether to apply log10 transformation (default True).
+            pseudocount: Pseudocount to add before log transformation (default 1).
+            opacity: Opacity for histogram bars (useful for overlays).
 
         Returns:
-            Tuple (success_boolean, output_html_path_or_error_message).
+            Tuple (success_boolean, message or output_path).
         """
-        logger.info(f"Generating sgRNA distribution plot for {count_path}")
-        if not PLOTLY_AVAILABLE:
-             return False, "Plotly library is required but not installed."
-
         try:
             df = pd.read_csv(count_path, sep='\t')
 
-            # Identify count columns (all columns except sgRNA and Gene)
-            count_cols = [col for col in df.columns if col not in ['sgRNA', 'Gene']]
-            if not count_cols:
-                raise ValueError("No sample count columns found in the count file.")
+            # Identify count columns (all columns except sgrna and gene)
+            count_columns = [col for col in df.columns if col not in ['sgrna', 'gene']]
 
-            # Calculate total reads per sgRNA across all samples
-            # Or plot distribution per sample? Let's start with total per sgRNA
-            # Ensure counts are numeric
-            df_numeric = df[count_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-            sgRNA_totals = df_numeric.sum(axis=1)
-            
-            # Create plotting dataframe
-            plot_df = pd.DataFrame({'sgRNA': df['sgRNA'], 'counts': sgRNA_totals})
-            
-            plot_title = "sgRNA Read Count Distribution"
-            x_axis_label = "Total Read Counts per sgRNA"
-            
+            # Melt dataframe for plotting
+            df_melted = pd.melt(df, id_vars=['sgrna', 'gene'], value_vars=count_columns,
+                                var_name='Sample', value_name='Count')
+
+            # Optional log transform
+            x_axis_label = "Read Count"
+            plot_column = 'Count'
             if log_transform:
-                plot_df['counts_log10'] = np.log10(plot_df['counts'] + pseudocount)
-                x_var = 'counts_log10'
-                x_axis_label = f"log10(Counts + {pseudocount})"
-                plot_title += f" (log10 + {pseudocount})"
-            else:
-                x_var = 'counts'
+                df_melted['LogCount'] = np.log10(df_melted['Count'] + pseudocount)
+                x_axis_label = f"Log10(Read Count + {pseudocount})"
+                plot_column = 'LogCount' # Use the transformed column for plotting
 
-            # Generate histogram using Plotly Express
+            # Create overlaid density histograms
             fig = px.histogram(
-                plot_df,
-                x=x_var,
-                title=plot_title,
-                labels={x_var: x_axis_label},
-                marginal="rug", # Add rug plot to show individual points
-                # nbins=50 # Optional: adjust number of bins
+                df_melted,
+                x=plot_column, # Plot counts (or log counts) on x-axis
+                color="Sample", # Use different colors for each sample
+                title="sgRNA Read Count Distribution Density per Sample",
+                histnorm='probability density', # Normalize to show density
+                barmode='overlay', # Overlay bars
+                opacity=opacity, # Set opacity for visibility
+                labels={plot_column: x_axis_label} # Set x-axis label
+                # hover_data=['sgrna', 'gene'] # Hover data less informative on histogram bins
             )
-            fig.update_layout(bargap=0.1)
-            
-            # Ensure output directory exists
-            Path(output_html_path).parent.mkdir(parents=True, exist_ok=True)
-            
-            # Save plot as HTML
-            pio.write_html(fig, output_html_path, auto_open=False)
-            
-            logger.info(f"Successfully generated sgRNA distribution plot: {output_html_path}")
+
+            # Update layout for better readability
+            fig.update_layout(
+                yaxis_title="Density",
+                xaxis_title=x_axis_label, # Already set via labels
+                legend_title="Sample"
+            )
+
+            # Save plot
+            fig.write_html(output_html_path)
+            logger.info(f"sgRNA distribution density plot saved to {output_html_path}")
             return True, str(output_html_path)
-            
+        except ImportError:
+            logger.error("Plotly not installed, cannot generate sgRNA distribution plot.")
+            return False, "Plotly not installed."
         except Exception as e:
-            logger.exception(f"Error generating sgRNA distribution plot: {e}")
+            logger.error(f"Error generating sgRNA distribution plot: {e}")
             return False, f"Error generating plot: {e}"
 
     def plot_gene_distribution(
         count_path: str,
         output_html_path: str,
         log_transform: bool = True,
-        pseudocount: int = 1
+        pseudocount: int = 1,
+        opacity: float = 0.6 # Added for overlaid plots
     ) -> Tuple[bool, Optional[str]]:
         """
-        Generates an interactive histogram of gene read count distribution.
-        Counts are summed across all sgRNAs targeting the same gene before plotting.
+        Generates overlaid density histograms of median gene read count distributions per sample.
 
         Args:
-            count_path: Path to the aggregated count file (tab-delimited, sgRNA level).
-            output_html_path: Path to save the output HTML file.
-            log_transform: Whether to log10 transform counts (+ pseudocount) before plotting.
-            pseudocount: Pseudocount to add before log transformation.
+            count_path: Path to the aggregated count file (tab-delimited).
+            output_html_path: Path to save the output HTML plot.
+            log_transform: Whether to apply log10 transformation (default True).
+            pseudocount: Pseudocount to add before log transformation (default 1).
+            opacity: Opacity for histogram bars (useful for overlays).
 
         Returns:
-            Tuple (success_boolean, output_html_path_or_error_message).
+            Tuple (success_boolean, message or output_path).
         """
-        logger.info(f"Generating gene distribution plot for {count_path}")
-        # Check is already done at the top level, but double-check for clarity
-        if not PLOTLY_AVAILABLE:
-            return False, "Plotly library is required but not installed."
-
         try:
             df = pd.read_csv(count_path, sep='\t')
 
             # Identify count columns
-            count_cols = [col for col in df.columns if col not in ['sgRNA', 'Gene']]
-            if not count_cols:
-                raise ValueError("No sample count columns found in the count file.")
+            count_columns = [col for col in df.columns if col not in ['sgrna', 'gene']]
 
-            # Ensure counts are numeric
-            df_numeric = df[count_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-            # Add Gene column back for grouping
-            df_numeric['Gene'] = df['Gene']
+            # Calculate median count per gene for each sample
+            gene_medians = df.groupby('gene')[count_columns].median().reset_index()
 
-            # Aggregate counts per gene
-            gene_counts = df_numeric.groupby('Gene')[count_cols].sum()
-            
-            # Calculate total reads per gene across all samples
-            gene_totals = gene_counts.sum(axis=1)
+            # Melt dataframe for plotting
+            df_melted = pd.melt(gene_medians, id_vars=['gene'], value_vars=count_columns,
+                                var_name='Sample', value_name='Median Count')
+            # Rename 'gene' column to 'Gene' for consistency if needed
+            df_melted.rename(columns={'gene': 'Gene'}, inplace=True)
 
-            # Create plotting dataframe
-            plot_df = pd.DataFrame({'Gene': gene_totals.index, 'counts': gene_totals.values})
-
-            plot_title = "Aggregated Gene Read Count Distribution"
-            x_axis_label = "Total Read Counts per Gene"
-
+            # Optional log transform
+            x_axis_label = "Median Read Count per Gene"
+            plot_column = 'Median Count'
             if log_transform:
-                plot_df['counts_log10'] = np.log10(plot_df['counts'] + pseudocount)
-                x_var = 'counts_log10'
-                x_axis_label = f"log10(Counts + {pseudocount})"
-                plot_title += f" (log10 + {pseudocount})"
-            else:
-                x_var = 'counts'
+                df_melted['LogMedianCount'] = np.log10(df_melted['Median Count'] + pseudocount)
+                x_axis_label = f"Log10(Median Read Count + {pseudocount}) per Gene"
+                plot_column = 'LogMedianCount' # Plot transformed column
 
-            # Generate histogram using Plotly Express
+            # Create overlaid density histograms
             fig = px.histogram(
-                plot_df,
-                x=x_var,
-                title=plot_title,
-                labels={x_var: x_axis_label},
-                marginal="rug"
+                df_melted,
+                x=plot_column, # Plot median counts (or log counts) on x-axis
+                color="Sample", # Use different colors for each sample
+                title="Median Gene Read Count Distribution Density per Sample",
+                histnorm='probability density', # Normalize to show density
+                barmode='overlay', # Overlay bars
+                opacity=opacity, # Set opacity for visibility
+                labels={plot_column: x_axis_label} # Set x-axis label
+                # hover_data=['Gene'] # Hover data less informative on histogram bins
             )
-            fig.update_layout(bargap=0.1)
 
-            # Ensure output directory exists
-            Path(output_html_path).parent.mkdir(parents=True, exist_ok=True)
+            # Update layout for better readability
+            fig.update_layout(
+                yaxis_title="Density",
+                xaxis_title=x_axis_label, # Already set via labels
+                legend_title="Sample"
+            )
 
-            # Save plot as HTML
-            pio.write_html(fig, output_html_path, auto_open=False)
-
-            logger.info(f"Successfully generated gene distribution plot: {output_html_path}")
+            # Save plot
+            fig.write_html(output_html_path)
+            logger.info(f"Gene distribution density plot saved to {output_html_path}")
             return True, str(output_html_path)
-
+        except ImportError:
+            logger.error("Plotly not installed, cannot generate gene distribution plot.")
+            return False, "Plotly not installed."
         except Exception as e:
-            logger.exception(f"Error generating gene distribution plot: {e}")
+            logger.error(f"Error generating gene distribution plot: {e}")
             return False, f"Error generating plot: {e}"
 
     def plot_gini_index(
@@ -837,16 +826,21 @@ if PLOTLY_AVAILABLE:
             Tuple (success_boolean, output_html_path_or_error_message).
         """
         logger.info(f"Generating Gini index plot for {count_path}")
-        if not PLOTLY_AVAILABLE:
-            return False, "Plotly library is required but not installed."
+        # No need to check PLOTLY_AVAILABLE here as we are inside the if block
 
         try:
             df = pd.read_csv(count_path, sep='\t')
 
-            # Identify count columns
-            count_cols = [col for col in df.columns if col not in ['sgRNA', 'Gene']]
+            # Identify count columns (assuming first two are sgRNA/Gene)
+            count_cols = [col for col in df.columns if col.lower() not in ['sgrna', 'gene']]
             if not count_cols:
-                raise ValueError("No sample count columns found in the count file.")
+                 # Attempt to infer if first two columns are keys
+                 if len(df.columns) > 2:
+                     potential_key_cols = df.columns[:2]
+                     count_cols = df.columns[2:]
+                     logger.warning(f"Could not definitively identify key columns (sgRNA, Gene). Assuming first two '{potential_key_cols[0]}', '{potential_key_cols[1]}' are keys.")
+                 else:
+                     raise ValueError("No sample count columns found or inferrable in the count file.")
 
             # Ensure counts are numeric
             df_numeric = df[count_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
@@ -864,16 +858,16 @@ if PLOTLY_AVAILABLE:
                     logger.warning(f"Skipping Gini index for sample '{sample}': Not enough non-zero counts ({len(sample_counts)})." )
                     gini_indices[sample] = np.nan
                     continue
-                    
+
                 # Sort counts for Lorenz curve calculation
                 sorted_counts = np.sort(sample_counts)
                 n = len(sorted_counts)
                 cum_counts = np.cumsum(sorted_counts)
-                
+
                 # Calculate Lorenz curve points
                 lorenz_x = np.linspace(0, 1, n + 1)
                 lorenz_y = np.concatenate(([0], cum_counts / cum_counts[-1]))
-                
+
                 # Calculate Gini index
                 # Gini = 1 - 2 * (Area under Lorenz Curve)
                 # Area can be approximated using trapezoidal rule
@@ -961,106 +955,34 @@ if PLOTLY_AVAILABLE:
         # 7. Save HTML
         return False, "ROC curve plotting not implemented."
 
-    # ... [Placeholder/implementation for generate_qc_report goes here] ...
-
-
-# --- Actual implementations if Plotly is available --- 
-if PLOTLY_AVAILABLE:
-    # ... [Existing plot_sgRNA_distribution function remains here] ...
-
-    def plot_gene_distribution(
-        count_path: str,
-        output_html_path: str,
-        log_transform: bool = True,
-        pseudocount: int = 1
-    ) -> Tuple[bool, Optional[str]]:
+    def generate_qc_report(*args, **kwargs):
         """
-        Generates an interactive histogram of gene read count distribution.
-        Counts are summed across all sgRNAs targeting the same gene before plotting.
+        [TODO] Generates an aggregate QC report combining various plots.
 
         Args:
-            count_path: Path to the aggregated count file (tab-delimited, sgRNA level).
-            output_html_path: Path to save the output HTML file.
-            log_transform: Whether to log10 transform counts (+ pseudocount) before plotting.
-            pseudocount: Pseudocount to add before log transformation.
+            *args, **kwargs: Placeholder for arguments like paths to input plots.
 
         Returns:
-            Tuple (success_boolean, output_html_path_or_error_message).
+            Tuple (success_boolean, message_or_output_path).
         """
-        logger.info(f"Generating gene distribution plot for {count_path}")
-        # Check is already done at the top level, but double-check for clarity
-        if not PLOTLY_AVAILABLE:
-            return False, "Plotly library is required but not installed."
+        logger.warning("Generating QC report is not yet implemented.")
+        # Placeholder implementation
+        # 1. Collect paths to existing plot files (sgRNA dist, gene dist, gini, ROC, FastQC).
+        # 2. Create an HTML structure (e.g., using basic HTML string formatting or a template engine).
+        # 3. Embed plots (potentially as iframes or by including the JS/HTML directly).
+        # 4. Save the combined HTML report.
+        return False, "QC report generation not implemented."
 
-        try:
-            df = pd.read_csv(count_path, sep='\t')
+else: # PLOTLY_AVAILABLE is False
+    # --- Placeholder functions if Plotly is not available ---
+    def plot_gini_index(*args, **kwargs):
+        logger.error("Plotly not installed, cannot generate Gini index plot.")
+        return False, "Plotly not installed."
 
-            # Identify count columns
-            count_cols = [col for col in df.columns if col not in ['sgRNA', 'Gene']]
-            if not count_cols:
-                raise ValueError("No sample count columns found in the count file.")
+    def plot_roc_curve(*args, **kwargs):
+        logger.error("Plotly not installed, cannot generate ROC curve plot.")
+        return False, "Plotly not installed."
 
-            # Ensure counts are numeric
-            df_numeric = df[count_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
-            # Add Gene column back for grouping
-            df_numeric['Gene'] = df['Gene']
-
-            # Aggregate counts per gene
-            gene_counts = df_numeric.groupby('Gene')[count_cols].sum()
-            
-            # Calculate total reads per gene across all samples
-            gene_totals = gene_counts.sum(axis=1)
-
-            # Create plotting dataframe
-            plot_df = pd.DataFrame({'Gene': gene_totals.index, 'counts': gene_totals.values})
-
-            plot_title = "Aggregated Gene Read Count Distribution"
-            x_axis_label = "Total Read Counts per Gene"
-
-            if log_transform:
-                plot_df['counts_log10'] = np.log10(plot_df['counts'] + pseudocount)
-                x_var = 'counts_log10'
-                x_axis_label = f"log10(Counts + {pseudocount})"
-                plot_title += f" (log10 + {pseudocount})"
-            else:
-                x_var = 'counts'
-
-            # Generate histogram using Plotly Express
-            fig = px.histogram(
-                plot_df,
-                x=x_var,
-                title=plot_title,
-                labels={x_var: x_axis_label},
-                marginal="rug"
-            )
-            fig.update_layout(bargap=0.1)
-
-            # Ensure output directory exists
-            Path(output_html_path).parent.mkdir(parents=True, exist_ok=True)
-
-            # Save plot as HTML
-            pio.write_html(fig, output_html_path, auto_open=False)
-
-            logger.info(f"Successfully generated gene distribution plot: {output_html_path}")
-            return True, str(output_html_path)
-
-        except Exception as e:
-            logger.exception(f"Error generating gene distribution plot: {e}")
-            return False, f"Error generating plot: {e}"
-
-    # ... [Placeholders/implementations for plot_gini_index, plot_roc_curve, generate_qc_report go here] ...
-
-
-# --- Placeholder for plot_gini_index, plot_roc_curve, generate_qc_report --- 
-
-def plot_gini_index(*args, **kwargs):
-    logger.error("Plotly not installed, cannot generate Gini index plot.")
-    return False, "Plotly not installed."
-
-def plot_roc_curve(*args, **kwargs):
-    logger.error("Plotly not installed, cannot generate ROC curve plot.")
-    return False, "Plotly not installed."
-
-def generate_qc_report(*args, **kwargs):
-    logger.error("Plotly not installed, cannot generate QC report.")
-    return False, "Plotly not installed." 
+    def generate_qc_report(*args, **kwargs):
+        logger.error("Plotly not installed, cannot generate QC report.")
+        return False, "Plotly not installed."
