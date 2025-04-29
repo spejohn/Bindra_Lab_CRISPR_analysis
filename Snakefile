@@ -1596,20 +1596,22 @@ def get_final_outputs(wildcards):
                 final_files.append(qc_report)
 
             # Per-contrast QC plots (ROC needs controls check)
-            if "plot_roc_curve" in globals():
-                 known_controls_path = BASE_DIR / experiment / "known_controls.csv"
-                 logging.debug(f"  ROC Check: known_controls_exists={known_controls_path.exists()} ({known_controls_path})") # DEBUG -> debug
-                 if known_controls_path.exists(): # Only *require* ROC if controls file exists
-                    for contrast in contrasts:
-                        # This plot is now generated conditionally by the rule itself,
-                        # but we still need it as a target for rule all if controls exist.
-                        roc_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_{contrast}_roc.html"
-                        logging.debug(f"    Adding QC target (since controls exist): {roc_plot}") # DEBUG -> debug
-                        final_files.append(roc_plot)
-                 else:
-                     logging.debug("    Skipping adding ROC plots to final targets (no known_controls.csv)") # DEBUG -> debug
-            else:
-                 logging.debug("    Skipping ROC plots (rule not defined)") # DEBUG -> debug
+            # <<<<<<<<<<<<<<<<<<<<<<<<< COMMENT OUT ROC SECTION START >>>>>>>>>>>>>>>>>>>>>>>>>
+            # if "plot_roc_curve" in globals():
+            #      known_controls_path = BASE_DIR / experiment / "known_controls.csv"
+            #      logging.debug(f"  ROC Check: known_controls_exists={known_controls_path.exists()} ({known_controls_path})") # DEBUG -> debug
+            #      if known_controls_path.exists(): # Only *require* ROC if controls file exists
+            #         for contrast in contrasts:
+            #             # This plot is now generated conditionally by the rule itself,
+            #             # but we still need it as a target for rule all if controls exist.
+            #             roc_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_{contrast}_roc.html"
+            #             logging.debug(f"    Adding QC target (since controls exist): {roc_plot}") # DEBUG -> debug
+            #             final_files.append(roc_plot)
+            #      else:
+            #          logging.debug("    Skipping adding ROC plots to final targets (no known_controls.csv)") # DEBUG -> debug
+            # else:
+            #      logging.debug("    Skipping ROC plots (rule not defined)") # DEBUG -> debug
+            # <<<<<<<<<<<<<<<<<<<<<<<<< COMMENT OUT ROC SECTION END >>>>>>>>>>>>>>>>>>>>>>>>>
 
             # Per-sample FastQC reports (if FASTQ input)
             logging.debug(f"  FastQC Check: data_type={validation_info.get('data_type')}") # DEBUG -> debug

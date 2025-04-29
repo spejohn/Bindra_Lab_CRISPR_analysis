@@ -78,3 +78,4 @@ coverage.xml
 # SLURM batch scripts
 *run_workflow.sh
 *download_data.sh
+*copy_samples.sh
