@@ -781,6 +781,29 @@ rule aggregate_counts:
             logging.info( # Use info level
                 f"[{datetime.now()}] {wildcards.experiment}: Skipping count aggregation (data type: {validation_info.get('data_type')}, status: {validation_info.get('status')})."
             )
+            # --- ADDED: Handle 'rc' type by copying the input count file --- 
+            if validation_info.get("data_type") == "rc":
+                input_rc_path_str = validation_info.get("rc_path")
+                if input_rc_path_str and Path(input_rc_path_str).exists():
+                    try:
+                        target_output_path = Path(output.agg_count_txt)
+                        target_output_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy(input_rc_path_str, target_output_path)
+                        logging.info(f"[{datetime.now()}] {wildcards.experiment}: Copied input RC file {input_rc_path_str} to {target_output_path} as final count file.")
+                    except Exception as e:
+                        error_msg = f"Error copying input RC file {input_rc_path_str} for {wildcards.experiment}: {e}"
+                        logging.error(f"[{datetime.now()}]: {error_msg}", exc_info=True)
+                        with open(str(log), "w") as f:
+                            f.write(error_msg)
+                        raise e
+                else:
+                    error_msg = f"Input RC file path not found or file does not exist: {input_rc_path_str}. Cannot create final count file."
+                    logging.error(f"[{datetime.now()}] {wildcards.experiment}: {error_msg}")
+                    with open(str(log), "w") as f:
+                        f.write(error_msg)
+                    # Raise an error because downstream rules expect this file
+                    raise FileNotFoundError(error_msg)
+            # --- END ADDED SECTION ---
             # Create empty output file if skipped but needed downstream? Consider implications.
             # For now, just log the skip. Downstream rules should handle missing input if appropriate.
 
