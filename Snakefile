@@ -549,6 +549,19 @@ def get_fastq_r2_for_sample(wildcards):
     return []
 
 
+# NEW helper function for conditional library input
+def get_library_path_for_fastq(wildcards):
+    """Returns library path only if data type is fastq."""
+    validation_info = get_validation_info(wildcards.experiment)
+    if validation_info.get("data_type") == "fastq":
+        # Return the path (which might be None if validation failed *for* fastq type,
+        # but rule wouldn't run anyway in that case)
+        return validation_info.get("library_path")
+    else:
+        # Return empty list for non-fastq types to avoid InputFunctionException
+        # during DAG construction when this rule isn't meant to run.
+        return []
+
 # --- Rule to run FastQC on individual FASTQ files ---
 rule run_fastqc_per_sample:
     input:
@@ -585,7 +598,8 @@ rule run_mageck_count_per_sample:
     input:
         r1=get_fastq_for_sample,
         r2=get_fastq_r2_for_sample, # May return None if single-end
-        library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
+        # library=lambda wc: get_validation_info(wc.experiment).get("library_path"),
+        library=get_library_path_for_fastq, # Use the new helper function
         sif=MAGECK_SIF, # Keep SIF as input for dependency
     output:
         # Output files go into a dedicated subdirectory
