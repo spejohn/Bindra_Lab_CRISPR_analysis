@@ -618,6 +618,7 @@ rule run_mageck_count_per_sample:
     #       in the mounted host output directory (params.output_dir_host).
     #       The --output-prefix uses a relative path within that directory.
     #       Removed the conditional check for R2 input.
+    #       TODO: Add a sgrna count mispairing option.
     shell: r"""
         mkdir -p $(dirname {log}) && \
         mageck count \
@@ -1469,7 +1470,7 @@ rule generate_qc_report:
 
 # --- Rule All: Define Final Output Files ---
 
-
+# TODO: Update existing QC rules, and add any necessary QC rules.
 def get_final_outputs(wildcards):
     """Dynamically collects all expected final output files based on config and targets."""
     final_files = []
@@ -1579,21 +1580,24 @@ def get_final_outputs(wildcards):
         if not config.get("skip_qc", False):
             # Per-experiment QC plots (ensure rules still exist)
             if "plot_sgrna_distribution" in globals(): # Check if rule exists
-                sgrna_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
-                logging.debug(f"    Adding QC target: {sgrna_plot}") # DEBUG -> debug
-                final_files.append(sgrna_plot)
+                # sgrna_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_sgrna_distribution.html"
+                # logging.debug(f"    Adding QC target: {sgrna_plot}") # DEBUG -> debug
+                # final_files.append(sgrna_plot)
+                logging.debug("    Skipping sgrna_distribution plot target (temporarily disabled)") # DEBUG -> debug
             if "plot_gene_distribution" in globals():
-                gene_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
-                logging.debug(f"    Adding QC target: {gene_plot}") # DEBUG -> debug
-                final_files.append(gene_plot)
+                # gene_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_gene_distribution.html"
+                # logging.debug(f"    Adding QC target: {gene_plot}") # DEBUG -> debug
+                # final_files.append(gene_plot)
+                logging.debug("    Skipping gene_distribution plot target (temporarily disabled)") # DEBUG -> debug
             if "plot_gini_index" in globals():
                 gini_plot = OUTPUT_DIR / experiment / "qc" / f"{experiment}_gini_index.html"
                 logging.debug(f"    Adding QC target: {gini_plot}") # DEBUG -> debug
                 final_files.append(gini_plot)
             if "generate_qc_report" in globals():
-                qc_report = OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
-                logging.debug(f"    Adding QC target: {qc_report}") # DEBUG -> debug
-                final_files.append(qc_report)
+                # qc_report = OUTPUT_DIR / experiment / "qc" / f"{experiment}_qc_report.html"
+                # logging.debug(f"    Adding QC target: {qc_report}") # DEBUG -> debug
+                # final_files.append(qc_report)
+                logging.debug("    Skipping qc_report target (temporarily disabled due to upstream dependencies)") # DEBUG -> debug
 
             # Per-contrast QC plots (ROC needs controls check)
             # <<<<<<<<<<<<<<<<<<<<<<<<< COMMENT OUT ROC SECTION START >>>>>>>>>>>>>>>>>>>>>>>>>
@@ -1618,12 +1622,13 @@ def get_final_outputs(wildcards):
             if validation_info.get("data_type") == "fastq" and "run_fastqc_per_sample" in globals():
                 fastq_basenames = get_fastq_basenames(experiment)
                 logging.debug(f"    FastQC basenames: {fastq_basenames}") # DEBUG -> debug
-                for sample in fastq_basenames:
-                    fq_html = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.html"
-                    fq_zip = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.zip"
-                    logging.debug(f"    Adding QC targets: {fq_html}, {fq_zip}") # DEBUG -> debug
-                    final_files.append(fq_html)
-                    final_files.append(fq_zip)
+                # for sample in fastq_basenames:
+                #     fq_html = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.html"
+                #     fq_zip = OUTPUT_DIR / experiment / "qc" / f"{sample}_fastqc.zip"
+                #     logging.debug(f"    Adding QC targets: {fq_html}, {fq_zip}") # DEBUG -> debug
+                #     final_files.append(fq_html)
+                #     final_files.append(fq_zip)
+                logging.debug("    Skipping FastQC report targets (temporarily disabled)") # DEBUG -> debug
             else:
                 logging.debug("    Skipping FastQC reports (not FASTQ data or rule undefined)") # DEBUG -> debug
         else:

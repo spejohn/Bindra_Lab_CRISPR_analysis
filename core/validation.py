@@ -339,62 +339,6 @@ def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, b
     info["contrasts_path"] = str(contrast_files[0])
     logger.info(f"Found contrasts file: {info['contrasts_path']}")
 
-    # 2. Find Library File (mandatory)
-    library_patterns = ["*library*.csv", "*library*.txt", "*guide*.csv", "*guide*.txt"]
-    library_files = []
-    for pattern in library_patterns:
-        library_files.extend(list(exp_path.glob(pattern)))
-    
-    if not library_files:
-        err_msg = f"Mandatory library/guide file ({'/'.join(library_patterns)}) not found in {experiment_dir}."
-        logger.error(err_msg)
-        info["status"] = "failed"
-        info["error"] = err_msg
-        return info
-    elif len(library_files) > 1:
-         logger.warning(f"Multiple library/guide files found in {experiment_dir}. Using the first one: {library_files[0]}")
-    info["library_path"] = str(library_files[0])
-    logger.info(f"Found library file: {info['library_path']}")
-    
-    # *** Add Library Header Order Check ***
-    try:
-        # Read only the header using pandas to auto-detect separator
-        lib_header_df = pd.read_csv(
-            info["library_path"], 
-            sep=None, # Auto-detect separator (comma or tab)
-            engine='python', # Needed for sep=None
-            nrows=0, # Read only header
-            encoding='utf-8-sig' # Handle potential BOM
-        )
-        lib_columns = [col.lower().strip() for col in lib_header_df.columns]
-        
-        # Use LIBRARY_REQUIRED_COLUMNS (lowercase) for order check
-        expected_order_lower = [col.lower() for col in LIBRARY_REQUIRED_COLUMNS]
-        
-        if len(lib_columns) < 3:
-             # Use expected_order_lower in the error message
-            raise ValueError(f"Library file has fewer than 3 columns ({len(lib_columns)} found). Expected at least: {expected_order_lower}")
-            
-        # Check the first three columns in order (case-insensitive)
-        first_three_cols = lib_columns[:3]
-        # Compare against expected_order_lower
-        if first_three_cols != expected_order_lower:
-             raise ValueError(
-                f"Incorrect library file column order. Expected first three columns: "
-                # Use expected_order_lower in the error message
-                f"{expected_order_lower}. Found: {first_three_cols}. "
-                f"Full columns found: {lib_columns}"
-            )
-        logger.info(f"Library file header order validated successfully: {first_three_cols}...")
-            
-    except Exception as e:
-        err_msg = f"Error validating library file header ({info['library_path']}): {e}"
-        logger.error(err_msg)
-        info["status"] = "failed"
-        info["error"] = err_msg
-        return info
-    # *** End Library Header Order Check ***
-
     # --- Identify Data Type (FASTQ or Read Counts) --- 
     # Prefer FASTQ if found
     fastq_dir_path = exp_path / "fastq"
@@ -441,6 +385,68 @@ def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, b
             info["status"] = "failed"
             info["error"] = err_msg
             return info
+
+    # --- Find and Validate Library (CONDITIONAL on data_type) ---
+    if info["data_type"] == "fastq":
+        # 2. Find Library File (mandatory FOR FASTQ)
+        library_patterns = ["*library*.csv", "*library*.txt", "*guide*.csv", "*guide*.txt"]
+        library_files = []
+        for pattern in library_patterns:
+            library_files.extend(list(exp_path.glob(pattern)))
+        
+        if not library_files:
+            err_msg = f"Mandatory library/guide file ({'/'.join(library_patterns)}) not found in {experiment_dir} (Required for FASTQ data type)."
+            logger.error(err_msg)
+            info["status"] = "failed"
+            info["error"] = err_msg
+            return info
+        elif len(library_files) > 1:
+             logger.warning(f"Multiple library/guide files found in {experiment_dir}. Using the first one: {library_files[0]}")
+        info["library_path"] = str(library_files[0])
+        logger.info(f"Found library file (required for FASTQ): {info['library_path']}")
+        
+        # *** Add Library Header Order Check (Mandatory for FASTQ) ***
+        try:
+            # Read only the header using pandas to auto-detect separator
+            lib_header_df = pd.read_csv(
+                info["library_path"], 
+                sep=None, # Auto-detect separator (comma or tab)
+                engine='python', # Needed for sep=None
+                nrows=0, # Read only header
+                encoding='utf-8-sig' # Handle potential BOM
+            )
+            lib_columns = [col.lower().strip() for col in lib_header_df.columns]
+            
+            # Use LIBRARY_REQUIRED_COLUMNS (lowercase) for order check
+            expected_order_lower = [col.lower() for col in LIBRARY_REQUIRED_COLUMNS]
+            
+            if len(lib_columns) < 3:
+                 # Use expected_order_lower in the error message
+                raise ValueError(f"Library file has fewer than 3 columns ({len(lib_columns)} found). Expected at least: {expected_order_lower}")
+                
+            # Check the first three columns in order (case-insensitive)
+            first_three_cols = lib_columns[:3]
+            # Compare against expected_order_lower
+            if first_three_cols != expected_order_lower:
+                 raise ValueError(
+                    f"Incorrect library file column order. Expected first three columns: "
+                    # Use expected_order_lower in the error message
+                    f"{expected_order_lower}. Found: {first_three_cols}. "
+                    f"Full columns found: {lib_columns}"
+                )
+            logger.info(f"Library file header validated successfully: {first_three_cols}...")
+                
+        except Exception as e:
+            err_msg = f"Error validating library file header ({info['library_path']}): {e}"
+            logger.error(err_msg)
+            info["status"] = "failed"
+            info["error"] = err_msg
+            return info
+        # *** End Library Header Order Check ***
+    else: # data_type is 'rc'
+        logger.info("Data type is 'rc', library file is not strictly required for validation.")
+        # Try to find it optionally? Or just set to None? Let's set to None for now.
+        info["library_path"] = None # Explicitly set to None if not checked/found for rc
 
     # --- Optional: Find Design Matrix for MLE --- 
     design_matrix_patterns = ["*design_matrix*.csv", "*design_matrix*.txt", "*design*.csv", "*design*.txt"]
