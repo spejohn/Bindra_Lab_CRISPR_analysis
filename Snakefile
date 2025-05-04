@@ -714,15 +714,34 @@ rule aggregate_count_summaries:
              Path(output.agg_summary).touch()
 
 
+# NEW input function for aggregate_counts
+def get_mageck_counts_for_fastq_only(wildcards):
+    """Returns list of mageck count outputs only if data type is fastq."""
+    validation_info = get_validation_info(wildcards.experiment)
+    if validation_info.get("data_type") == "fastq":
+        # Ensure get_fastq_basenames is called with the correct wildcards object
+        # It should be safe even if validation failed for fastq, returning empty list
+        sample_basenames = get_fastq_basenames(wildcards.experiment)
+        return expand(
+            OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt",
+            experiment=wildcards.experiment,
+            sample=sample_basenames
+        )
+    else:
+        # Return empty list for non-fastq types. This prevents the rule from running
+        # if another rule (convert_read_count_input) can produce the required output.
+        return []
+
 # --- Rule to Aggregate Sample Counts (from FASTQ processing) ---
 rule aggregate_counts:
     input:
         # Input now depends on the output of the new count rule in the subdirectory
-        sample_counts=lambda wc: expand(
-            OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt", # Look in subdirectory
-            experiment=wc.experiment,
-            sample=get_fastq_basenames(wc.experiment)
-        )
+        # sample_counts=lambda wc: expand(
+        #     OUTPUT_DIR / "{experiment}" / "mageck_count_outputs" / "{sample}.count.txt", # Look in subdirectory
+        #     experiment=wc.experiment,
+        #     sample=get_fastq_basenames(wc.experiment)
+        # )
+        sample_counts=get_mageck_counts_for_fastq_only, # Use the new conditional input function
     output:
         # Aggregated output is still at the experiment level
         agg_count_txt=OUTPUT_DIR / "{experiment}" / "{experiment}.count.txt",
