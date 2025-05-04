@@ -369,7 +369,7 @@ def validate_experiment_structure(experiment_dir: str) -> Dict[str, Union[str, b
         rc_files = [
             f for f in rc_files 
             if f.name != Path(info["contrasts_path"]).name and 
-               f.name != Path(info["library_path"]).name
+               (info["library_path"] is None or f.name != Path(info["library_path"]).name)
         ]
         
         if rc_files:
